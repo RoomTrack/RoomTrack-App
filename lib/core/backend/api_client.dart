@@ -16,6 +16,22 @@ const String _rawBaseUrl = String.fromEnvironment('API_BASE_URL',
 
 bool get backendEnabled => _rawBaseUrl.trim().isNotEmpty;
 
+/// Services of the production backend. On Render's free plan each one sleeps after ~15 minutes without traffic, and
+/// Render only wakes it for traffic from outside Render: the gateway's own calls do not, so the app wakes them.
+const List<String> _productionServices = [
+  'identity', 'accommodations', 'bookings', 'profiles', 'analytics', 'notifications',
+];
+
+/// Pings the `/health` of every production service without waiting for the answers. The gateway then waits for a
+/// waking service (up to 90 s) before forwarding, so the first request after a while takes ~30–60 s instead of
+/// failing with 502. Only when the app talks to the production gateway.
+void wakeProductionServices() {
+  if (ApiClient.baseUrl != kProductionBaseUrl) return;
+  for (final service in _productionServices) {
+    http.get(Uri.parse('https://roomtrack-$service.onrender.com/health')).ignore();
+  }
+}
+
 /// Error returned by the RoomTrack API, reduced to a Spanish message the UI can show.
 class ApiException extends DomainException {
   final int statusCode;
@@ -103,7 +119,8 @@ class ApiClient {
 
   Future<http.Response> _guard(Future<http.Response> Function() send) async {
     try {
-      return await send().timeout(const Duration(seconds: 70));
+      // A sleeping service takes up to 90 s to answer through the gateway (see [wakeProductionServices]).
+      return await send().timeout(const Duration(seconds: 100));
     } catch (_) {
       throw const ApiException(0, 'No hay conexión con el servidor de RoomTrack. Revisa que el backend esté encendido.');
     }
@@ -162,6 +179,7 @@ class ApiClient {
       403 => 'Tu rol no tiene permiso para esta acción.',
       404 => 'No encontramos lo que buscabas.',
       429 => 'Demasiados intentos. Espera un momento.',
+      502 || 503 || 504 => 'El servidor está arrancando. Inténtalo de nuevo en un momento.',
       _ => 'Error del servidor ($statusCode).',
     }, code: code);
   }

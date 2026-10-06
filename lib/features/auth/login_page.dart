@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/backend/api_client.dart';
@@ -183,28 +184,31 @@ class _LoginPageState extends State<LoginPage> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 18),
-                    Text(
-                      backendEnabled ? 'Cuentas del backend local (tool/seed_backend.py)' : 'Cuentas de demostración (contraseña $kDemoPassword)',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: kMuted, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        for (final account in backendEnabled
-                            ? [for (final a in kRemoteDemoAccounts) (email: a.email, label: a.label, password: a.password)]
-                            : [for (final a in kDemoAccounts) (email: a.email, label: a.label, password: kDemoPassword)])
-                          ActionChip(
-                            avatar: const Icon(Icons.person_outline, size: 18),
-                            label: Text(account.label),
-                            onPressed: () => _fillDemo(account.email, account.password),
-                          ),
-                      ],
-                    ),
+                    // The local seed accounts are only for development: never in a release build.
+                    if (!backendEnabled || kDebugMode) ...[
+                      const SizedBox(height: 18),
+                      Text(
+                        backendEnabled ? 'Cuentas del backend local (tool/seed_backend.py)' : 'Cuentas de demostración (contraseña $kDemoPassword)',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: kMuted, fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.center,
+                        children: [
+                          for (final account in backendEnabled
+                              ? [for (final a in kRemoteDemoAccounts) (email: a.email, label: a.label, password: a.password)]
+                              : [for (final a in kDemoAccounts) (email: a.email, label: a.label, password: kDemoPassword)])
+                            ActionChip(
+                              avatar: const Icon(Icons.person_outline, size: 18),
+                              label: Text(account.label),
+                              onPressed: () => _fillDemo(account.email, account.password),
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

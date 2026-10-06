@@ -8,8 +8,9 @@ La app funciona de dos formas:
 
 | Modo | Cuándo | Datos |
 |---|---|---|
-| **Demo** | Sin configuración | En memoria, con un hotel de ejemplo y un mes de historial. Se reinician al cerrar la app. |
-| **Backend** | Con `--dart-define=API_BASE_URL=...` | Los del [backend de RoomTrack](https://github.com/RoomTrack/RoomTrack-BackEnd) (microservicios .NET + MySQL). |
+| **Demo** | Compilaciones de depuración sin configuración | En memoria, con un hotel de ejemplo y un mes de historial. Se reinician al cerrar la app. |
+| **Producción** | Compilaciones release (`flutter build apk`) | Los del [backend de RoomTrack](https://github.com/RoomTrack/RoomTrack-BackEnd) desplegado en `https://roomtrack-api.onrender.com/api/v1`. |
+| **Backend propio** | Con `--dart-define=API_BASE_URL=...` | Los del backend en esa URL (por ejemplo, el local con Docker). |
 
 ---
 
@@ -118,6 +119,18 @@ rechaza.
 ---
 
 ## Conectar con el backend
+
+### Producción
+
+Las compilaciones release usan el backend de producción sin configuración extra:
+
+```bash
+flutter build apk --release
+```
+
+- El gateway corre en el plan gratuito de Render: tras un rato sin uso la primera petición tarda hasta ~1 minuto.
+- En release el login no muestra los botones de cuentas de prueba.
+- Para un release en modo demo: `flutter build apk --dart-define=API_BASE_URL=`.
 
 ### 1. Levantar el backend en local
 

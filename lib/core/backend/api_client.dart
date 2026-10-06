@@ -5,9 +5,14 @@ import 'package:http/http.dart' as http;
 
 import '../hotel_store.dart';
 
+/// Production gateway of RoomTrack (Render).
+const String kProductionBaseUrl = 'https://roomtrack-api.onrender.com/api/v1';
+
 /// Base URL of the RoomTrack gateway, e.g. `http://10.0.2.2:8080/api/v1` from the Android emulator.
-/// Without it the app runs on its in-memory demo data.
-const String _rawBaseUrl = String.fromEnvironment('API_BASE_URL');
+/// Release builds use [kProductionBaseUrl] by default; debug builds without it run on the in-memory demo data.
+/// `--dart-define=API_BASE_URL=` (empty) forces the demo in any build.
+const String _rawBaseUrl = String.fromEnvironment('API_BASE_URL',
+    defaultValue: bool.fromEnvironment('dart.vm.product') ? kProductionBaseUrl : '');
 
 bool get backendEnabled => _rawBaseUrl.trim().isNotEmpty;
 

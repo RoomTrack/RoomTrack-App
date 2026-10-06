@@ -46,3 +46,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Demo account secrets created by tool/seed_backend.py
+tool/demo_accounts.local.json
+__pycache__/

@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Release builds talk to the production backend. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="roomtrack"
+        android:label="RoomTrack"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

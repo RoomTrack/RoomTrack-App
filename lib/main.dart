@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'core/backend/api_client.dart';
 import 'core/hotel_store.dart';
 import 'core/session.dart';
 import 'features/auth/login_page.dart';
@@ -7,6 +8,7 @@ import 'features/shell/role_shell.dart';
 import 'shared/ui.dart';
 
 void main() {
+  wakeProductionServices();
   runApp(const RoomTrackApp());
 }
 

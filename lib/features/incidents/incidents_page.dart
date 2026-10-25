@@ -24,7 +24,10 @@ class _IncidentsPageState extends State<IncidentsPage> {
     return StoreBuilder(builder: (context, store) {
       final user = store.currentUser!;
       var list = widget.onlyMine
-          ? store.incidentsFor(user.id)
+          // The backend does not assign incidents by itself: maintenance also sees the unassigned ones to take them.
+          ? (store.isRemote
+              ? store.openIncidents.where((i) => i.assigneeId == user.id || i.assigneeId == null).toList()
+              : store.incidentsFor(user.id))
           : (store.incidents.toList()
             ..sort((a, b) {
               final open = (b.isOpen ? 1 : 0).compareTo(a.isOpen ? 1 : 0);

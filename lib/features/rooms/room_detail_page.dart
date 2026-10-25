@@ -74,7 +74,9 @@ class RoomDetailPage extends StatelessWidget {
                   text: 'Crear tarea de limpieza',
                   icon: Icons.cleaning_services_outlined,
                   outlined: true,
-                  onPressed: () => runAction(context, () => store.createCleaningTask(room.id), success: 'Tarea creada y asignada.'),
+                  onPressed: () => store.cleaningBackend == null
+                      ? runAction(context, () => store.createCleaningTask(room.id), success: 'Tarea creada y asignada.')
+                      : runAsync(context, () => store.cleaningBackend!.createCleaningTask(room.id), success: 'Tarea de limpieza creada.'),
                 ),
             ],
             const SizedBox(height: 10),
@@ -133,14 +135,18 @@ class IncidentTile extends StatelessWidget {
             runSpacing: 6,
             children: [
               PriorityPill(incident.urgency),
-              Pill(text: incident.category, color: kMuted),
+              if (incident.category.isNotEmpty) Pill(text: incident.category, color: kMuted),
               if (incident.preventive) const Pill(text: 'Preventivo', color: kSuccess, icon: Icons.event_repeat),
               if (incident.recurring) const Pill(text: 'Recurrente', color: kError, icon: Icons.repeat),
               if (incident.escalated) const Pill(text: 'Escalada', color: kError, icon: Icons.trending_up),
             ],
           ),
           const SizedBox(height: 6),
-          Text('${fmtDateTime(incident.createdAt)} · ${store.userName(incident.assigneeId)}', style: const TextStyle(color: kMuted, fontSize: 12)),
+          Text(
+            '${fmtDateTime(incident.createdAt)} · '
+            '${incident.assigneeId == null ? 'Sin asignar' : store.userById(incident.assigneeId)?.name ?? 'Asignada'}',
+            style: const TextStyle(color: kMuted, fontSize: 12),
+          ),
         ],
       ),
     );

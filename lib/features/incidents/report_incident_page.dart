@@ -24,6 +24,7 @@ class _ReportIncidentPageState extends State<ReportIncidentPage> {
   String _category = HotelStore.incidentCategories.first;
   Priority _urgency = Priority.normal;
   bool _blocksRoom = true;
+  bool _sending = false;
 
   @override
   void dispose() {
@@ -32,21 +33,40 @@ class _ReportIncidentPageState extends State<ReportIncidentPage> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final store = HotelStore.instance;
-    final ok = runAction(
-      context,
-      () => store.createIncident(
-        roomId: _roomId,
-        title: _title.text,
-        description: _description.text,
-        category: _category,
-        urgency: _urgency,
-        reporterId: store.currentUser!.id,
-        blocksRoom: _blocksRoom,
-      ),
-      success: 'Incidencia registrada como pendiente. Mantenimiento ya fue notificado.',
-    );
+    final remote = store.remote;
+    bool ok;
+    if (remote != null) {
+      setState(() => _sending = true);
+      ok = await runAsync(
+        context,
+        () => remote.reportIncident(
+          roomId: _roomId,
+          title: _title.text,
+          description: _description.text,
+          urgency: _urgency,
+          blocksRoom: _blocksRoom,
+        ),
+        success: 'Incidencia registrada como pendiente. Mantenimiento ya fue notificado.',
+      );
+      if (!mounted) return;
+      setState(() => _sending = false);
+    } else {
+      ok = runAction(
+        context,
+        () => store.createIncident(
+          roomId: _roomId,
+          title: _title.text,
+          description: _description.text,
+          category: _category,
+          urgency: _urgency,
+          reporterId: store.currentUser!.id,
+          blocksRoom: _blocksRoom,
+        ),
+        success: 'Incidencia registrada como pendiente. Mantenimiento ya fue notificado.',
+      );
+    }
     if (!ok) return;
     if (widget.standalone) {
       Navigator.pop(context);
@@ -77,13 +97,16 @@ class _ReportIncidentPageState extends State<ReportIncidentPage> {
         TextField(controller: _title, decoration: const InputDecoration(labelText: '¿Qué ocurre?', hintText: 'Ej. Ducha sin agua caliente')),
         const SizedBox(height: 12),
         TextField(controller: _description, maxLines: 3, decoration: const InputDecoration(labelText: 'Detalle (opcional)')),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: _category,
-          decoration: const InputDecoration(labelText: 'Categoría'),
-          items: [for (final c in HotelStore.incidentCategories) DropdownMenuItem(value: c, child: Text(c))],
-          onChanged: (value) => setState(() => _category = value ?? _category),
-        ),
+        // The backend has no incident categories.
+        if (!store.isRemote) ...[
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _category,
+            decoration: const InputDecoration(labelText: 'Categoría'),
+            items: [for (final c in HotelStore.incidentCategories) DropdownMenuItem(value: c, child: Text(c))],
+            onChanged: (value) => setState(() => _category = value ?? _category),
+          ),
+        ],
         const SizedBox(height: 16),
         const Text('Urgencia', style: TextStyle(fontWeight: FontWeight.w800)),
         const SizedBox(height: 6),
@@ -107,7 +130,7 @@ class _ReportIncidentPageState extends State<ReportIncidentPage> {
           onChanged: (value) => setState(() => _blocksRoom = value),
         ),
         const SizedBox(height: 8),
-        AppButton(text: 'Registrar incidencia', icon: Icons.send, dark: true, onPressed: _submit),
+        AppButton(text: 'Registrar incidencia', icon: Icons.send, dark: true, loading: _sending, onPressed: _submit),
       ],
     );
     if (!widget.standalone) return form;

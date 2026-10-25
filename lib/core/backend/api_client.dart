@@ -163,6 +163,16 @@ class ApiClient {
     final known = _spanish[code];
     if (known != null) return ApiException(statusCode, known, code: code);
 
+    // Each broken rule carries its own code (e.g. `payment_settings.cci_invalid`).
+    final violations = parsed?['violations'];
+    if (violations is List) {
+      final messages = violations
+          .map((v) => v is Map ? _spanish[v['code']?.toString()] : null)
+          .whereType<String>()
+          .toSet();
+      if (messages.isNotEmpty) return ApiException(statusCode, messages.join('\n'), code: code);
+    }
+
     final errors = parsed?['errors'];
     if (errors is Map && errors.isNotEmpty) {
       final messages = errors.values
@@ -209,6 +219,29 @@ class ApiClient {
     'user.last_chain_admin': 'No puedes desactivar al último administrador de cadena.',
     'user.outside_hierarchy': 'No puedes modificar a un usuario de tu mismo nivel o superior.',
     'user.role_not_assignable': 'No puedes asignar ese rol.',
+    'incident.already_resolved': 'Esta incidencia ya está resuelta.',
+    'incident.assign_not_allowed': 'Solo el administrador puede asignarla a otra persona o quitársela a su responsable.',
+    'incident.assignee_not_maintenance': 'Solo se asigna a personal de mantenimiento del hotel.',
+    'incident.invalid_status_transition': 'La incidencia cambió de estado. Actualiza la pantalla.',
+    'incident.not_assigned': 'Primero asigna la incidencia a un técnico.',
+    'incident.not_assignee': 'Solo su responsable o un administrador puede hacerlo.',
+    'incident.title_length': 'El título debe tener de 3 a 120 caracteres.',
+    'incident.description_length': 'El detalle no puede pasar de 1000 caracteres.',
+    'incident.resolution_notes_required': 'Agrega observaciones sobre la solución.',
+    'incident.resolution_notes_length': 'Las observaciones no pueden pasar de 1000 caracteres.',
+    'cleaning_task.assign_not_allowed': 'Solo recepción o un administrador puede asignarla a otra persona.',
+    'cleaning_task.assignee_not_housekeeping': 'Solo se asigna a personal de limpieza del hotel.',
+    'cleaning_task.cancellation_reason_length': 'El motivo no puede pasar de 500 caracteres.',
+    'cleaning_task.closed': 'Esta tarea ya está cerrada.',
+    'cleaning_task.invalid_status_transition': 'La tarea cambió de estado. Actualiza la pantalla.',
+    'cleaning_task.manage_not_allowed': 'Solo recepción o un administrador puede hacerlo.',
+    'cleaning_task.no_housekeeper_available': 'No hay personal de limpieza activo para asignarla.',
+    'cleaning_task.not_assigned': 'Primero asigna la tarea a alguien de limpieza.',
+    'cleaning_task.not_assignee': 'Solo la persona responsable puede actualizar esta tarea.',
+    'cleaning_task.notes_length': 'Las indicaciones no pueden pasar de 500 caracteres.',
+    'cleaning_task.room_already_has_open_task': 'Esa habitación ya tiene una tarea de limpieza abierta.',
+    'room.occupied': 'La habitación está ocupada: se limpia cuando el huésped haga el check-out.',
+    'room.blocked_by_incident': 'Una incidencia abierta bloquea la habitación: primero hay que resolverla.',
     'room.invalid_status_transition': 'Ese cambio de estado no está permitido para la habitación.',
     'room.not_ready': 'La habitación aún no está lista.',
     'booking.room_unavailable': 'La habitación no está libre en esas fechas.',
@@ -216,6 +249,18 @@ class ApiClient {
     'booking.check_in_in_past': 'La fecha de llegada no puede ser pasada.',
     'booking.check_out_not_after_check_in': 'La salida debe ser al menos un día después de la llegada.',
     'booking.hotel_payment_settings_missing': 'El hotel aún no configuró sus medios de pago.',
+    'booking.cancellation_not_allowed': 'Solo se cancelan reservas pendientes o confirmadas.',
+    'booking.cancellation_too_late': 'Ya no se puede cancelar: el check-in es hoy o ya pasó.',
+    'payment_settings.account_holder_required': 'Indica a nombre de quién se paga.',
+    'payment_settings.account_holder_length': 'El titular debe tener de 2 a 100 caracteres.',
+    'payment_settings.method_required': 'Configura al menos un medio de pago: Yape, Plin o una cuenta bancaria.',
+    'payment_settings.yape_number_invalid': 'El número de Yape debe ser un celular de 9 dígitos que empiece con 9.',
+    'payment_settings.plin_number_invalid': 'El número de Plin debe ser un celular de 9 dígitos que empiece con 9.',
+    'payment_settings.bank_name_required': 'Indica el banco de la cuenta.',
+    'payment_settings.bank_name_length': 'El nombre del banco debe tener de 2 a 60 caracteres.',
+    'payment_settings.bank_account_number_required': 'Indica el número de cuenta del banco.',
+    'payment_settings.bank_account_number_invalid': 'El número de cuenta debe tener de 8 a 20 dígitos.',
+    'payment_settings.cci_invalid': 'El CCI debe tener 20 dígitos.',
     'payment.booking_already_paid': 'Esta reserva ya está pagada.',
     'payment.booking_not_pending': 'Solo se registran pagos de reservas pendientes.',
     'payment.operation_number_required': 'Ingresa el número de operación.',

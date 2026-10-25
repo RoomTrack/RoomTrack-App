@@ -71,6 +71,50 @@ class MonthlyMetrics {
   const MonthlyMetrics(this.revenue, this.bookings, this.occupancyRate, this.cancelled);
 }
 
+/// Payment methods of a hotel (`HotelPaymentSettingsResource`).
+class HotelPaymentSettings {
+  final bool acceptsBookings;
+  final String? accountHolder;
+  final String? yapeNumber;
+  final String? plinNumber;
+  final String? bankName;
+  final String? bankAccountNumber;
+  final String? bankAccountCci;
+
+  const HotelPaymentSettings({
+    this.acceptsBookings = false,
+    this.accountHolder,
+    this.yapeNumber,
+    this.plinNumber,
+    this.bankName,
+    this.bankAccountNumber,
+    this.bankAccountCci,
+  });
+
+  factory HotelPaymentSettings.fromJson(Map<String, dynamic> data) => HotelPaymentSettings(
+        acceptsBookings: data['acceptsBookings'] == true,
+        accountHolder: data['accountHolder'] as String?,
+        yapeNumber: data['yapeNumber'] as String?,
+        plinNumber: data['plinNumber'] as String?,
+        bankName: data['bankName'] as String?,
+        bankAccountNumber: data['bankAccountNumber'] as String?,
+        bankAccountCci: data['bankAccountCci'] as String?,
+      );
+
+  /// Blank values go as null: that method is not offered.
+  Map<String, dynamic> toJson() {
+    String? clean(String? value) => (value == null || value.trim().isEmpty) ? null : value.trim();
+    return {
+      'accountHolder': clean(accountHolder),
+      'yapeNumber': clean(yapeNumber),
+      'plinNumber': clean(plinNumber),
+      'bankName': clean(bankName),
+      'bankAccountNumber': clean(bankAccountNumber),
+      'bankAccountCci': clean(bankAccountCci),
+    };
+  }
+}
+
 /// The RoomTrack backend seen from the app.
 ///
 /// It owns the session, copies what the backend knows (users, rooms, bookings, payments) into the
@@ -193,6 +237,17 @@ class RemoteHotel {
   Future<void> changePassword(String current, String newPassword) =>
       api.post('/users/change-password', {'currentPassword': current, 'newPassword': newPassword});
 
+  /// Ends every session of the account, on every device (this one included).
+  Future<void> signOutEverywhere() async {
+    try {
+      await api.post('/authentication/sign-out-all');
+    } finally {
+      api.setSession(null);
+      me = null;
+      store.signOut();
+    }
+  }
+
   static String _tokenFrom(String linkOrToken) {
     final text = linkOrToken.trim();
     final match = RegExp(r'[?&]token=([^&\s]+)').firstMatch(text);
@@ -204,6 +259,17 @@ class RemoteHotel {
   // ---------------------------------------------------------------------------
 
   bool get _isAdmin => store.currentUser?.role == UserRole.admin;
+
+  /// Every hotel staff member sees the incidents of their hotel (a chain admin would have to pick one).
+  bool get _seesIncidents => (store.currentUser?.role.isStaff ?? false) && hotelId != null;
+
+  /// The backend has the cleaning tasks (US-05 / US-06). False until a sync finds them, and on backends without the
+  /// housekeeping module: there the tasks stay on this device as before.
+  bool hasCleaningTasks = false;
+
+  /// Housekeeping, reception and administrators (not maintenance).
+  bool get _seesCleaningTasks =>
+      const {UserRole.admin, UserRole.reception, UserRole.housekeeping}.contains(store.currentUser?.role) && hotelId != null;
 
   bool get _seesPayments {
     final role = store.currentUser?.role;
@@ -218,10 +284,12 @@ class RemoteHotel {
 
     final visibleRooms = rooms.where((r) => hotelId == null || r['hotelId'] == hotelId).map(_room).toList()
       ..sort((a, b) => a.number.compareTo(b.number));
-    for (final room in visibleRooms) {
-      // The backend has one Cleaning status; a cleaning already started on a device stays "en limpieza".
-      final local = store.rooms.where((r) => r.id == room.id).firstOrNull;
-      if (room.status == RoomStatus.dirty && local?.status == RoomStatus.cleaning) room.status = RoomStatus.cleaning;
+    if (!hasCleaningTasks) {
+      for (final room in visibleRooms) {
+        // The backend has one Cleaning status; a cleaning already started on a device stays "en limpieza".
+        final local = store.rooms.where((r) => r.id == room.id).firstOrNull;
+        if (room.status == RoomStatus.dirty && local?.status == RoomStatus.cleaning) room.status = RoomStatus.cleaning;
+      }
     }
     store.rooms
       ..clear()
@@ -240,6 +308,46 @@ class RemoteHotel {
     store.stays
       ..clear()
       ..addAll(stays);
+
+    // US-08 / US-09: the backend has the incidents of the hotel; preventive work still lives on this device.
+    if (_seesIncidents) {
+      try {
+        final incidents = (await api.get('/incidents?limit=500') as List).cast<Map<String, dynamic>>();
+        final previous = {for (final i in store.incidents) i.id: i};
+        store.incidents
+          ..removeWhere((i) => !i.preventive)
+          ..addAll(incidents.map((data) => _incident(data, previous[data['id']])));
+      } on ApiException catch (e) {
+        // A backend without the incidents module (an older local one) keeps them on this device.
+        if (e.statusCode != 404) rethrow;
+      }
+    }
+
+    // US-05 / US-06: with the backend's cleaning tasks the checklist still lives on this device (it has none).
+    if (_seesCleaningTasks) {
+      try {
+        final tasks = (await api.get('/cleaning-tasks?limit=500') as List).cast<Map<String, dynamic>>();
+        final previous = {for (final t in store.tasks) t.id: t};
+        store.tasks
+          ..clear()
+          ..addAll(tasks.where((data) => data['status'] != 'Cancelled').map((data) => _task(data, previous[data['id']])));
+        hasCleaningTasks = true;
+        if (store.currentUser?.role != UserRole.housekeeping) {
+          final settings = await api.get('/cleaning-tasks/settings') as Map<String, dynamic>;
+          store.autoAssignCleaning = settings['autoAssign'] == true;
+        }
+      } on ApiException catch (e) {
+        // A backend without the housekeeping module keeps the tasks on this device.
+        if (e.statusCode != 404) rethrow;
+        hasCleaningTasks = false;
+      }
+    }
+    if (hasCleaningTasks) {
+      // The backend has one Cleaning status: a room whose task was started is "en limpieza".
+      for (final room in store.rooms.where((r) => r.status == RoomStatus.dirty)) {
+        if (store.tasks.any((t) => t.roomId == room.id && t.status == TaskStatus.inProgress)) room.status = RoomStatus.cleaning;
+      }
+    }
 
     if (_seesPayments) {
       store.payments.clear();
@@ -398,6 +506,91 @@ class RemoteHotel {
         createdAt: DateTime.tryParse('${data['paymentDate']}Z'.replaceFirst(' ', 'T'))?.toLocal() ?? DateTime.now(),
       );
 
+  static Priority incidentPriority(String value) => switch (value) {
+        'Low' => Priority.low,
+        'High' => Priority.high,
+        'Critical' => Priority.urgent,
+        _ => Priority.normal, // Medium
+      };
+
+  static String backendIncidentPriority(Priority priority) => switch (priority) {
+        Priority.low => 'Low',
+        Priority.normal => 'Medium',
+        Priority.high => 'High',
+        Priority.urgent => 'Critical',
+      };
+
+  /// The backend has no categories: its incidents show none. The history only comes with a single incident; the
+  /// list keeps the one already loaded.
+  Incident _incident(Map<String, dynamic> data, [Incident? previous]) {
+    final incident = Incident(
+      id: data['id'] as int,
+      roomId: data['roomId'] as int,
+      title: data['title']?.toString() ?? '',
+      description: data['description']?.toString() ?? '',
+      category: '',
+      urgency: incidentPriority(data['priority']?.toString() ?? ''),
+      reportedById: data['reportedByUserId'] as int,
+      createdAt: DateTime.parse(data['reportedAt'].toString()).toLocal(),
+      status: switch (data['status']) {
+        'InProgress' => WorkStatus.inProgress,
+        'Resolved' => WorkStatus.resolved,
+        _ => WorkStatus.pending,
+      },
+      assigneeId: data['assigneeUserId'] as int?,
+      blocksRoom: data['blocksRoom'] == true,
+      escalated: data['escalatedAt'] != null,
+      resolutionNotes: data['resolutionNotes']?.toString() ?? '',
+    )
+      ..resolvedAt = DateTime.tryParse(data['resolvedAt']?.toString() ?? '')?.toLocal()
+      ..reportedByEmail = data['reportedByEmail']?.toString();
+    final history = data['history'];
+    if (history is List) {
+      incident.events.addAll([
+        for (final entry in history.cast<Map<String, dynamic>>())
+          TimelineEvent(DateTime.parse(entry['occurredAt'].toString()).toLocal(), _incidentEventText(entry)),
+      ]);
+    } else if (previous != null) {
+      incident.events.addAll(previous.events);
+    }
+    return incident;
+  }
+
+  /// The backend's `detail` is in English: the text is rebuilt in Spanish from the action.
+  String _incidentEventText(Map<String, dynamic> entry) {
+    final by = entry['actorEmail'] == null ? '' : ' · ${entry['actorEmail']}';
+    final detail = entry['detail']?.toString() ?? '';
+    switch (entry['action']) {
+      case 'Reported':
+        return 'Reportada$by';
+      case 'Assigned':
+        final assignee = int.tryParse(RegExp(r'\d+$').firstMatch(detail)?.group(0) ?? '');
+        final name = store.userById(assignee)?.name;
+        return '${name == null ? 'Asignada' : 'Asignada a $name'}$by';
+      case 'Started':
+        return 'En proceso$by';
+      case 'PriorityChanged':
+        final parts = detail.split('→').map((p) => incidentPriority(p.trim()).label).toList();
+        return '${parts.length == 2 ? 'Prioridad: ${parts[0]} → ${parts[1]}' : 'Prioridad cambiada'}$by';
+      case 'Escalated':
+        return 'Escalada al administrador por demora';
+      case 'Resolved':
+        return 'Resuelta${detail.isEmpty ? '' : ': $detail'}$by';
+      default:
+        return '${entry['action']}$by';
+    }
+  }
+
+  /// Puts the incident the backend answered (with its history) in the store.
+  void _upsertIncident(Map<String, dynamic> data) {
+    final previous = store.incidents.where((i) => i.id == data['id']).firstOrNull;
+    final incident = _incident(data, previous);
+    store.incidents
+      ..remove(previous)
+      ..add(incident);
+    store.refresh();
+  }
+
   static String _methodLabel(String value) =>
       kPaymentMethods.where((m) => m.value == value).firstOrNull?.label ?? value;
 
@@ -464,6 +657,21 @@ class RemoteHotel {
     await sync();
   }
 
+  /// Removes the authenticator and recovery codes of a collaborator (e.g. a lost phone) and ends their sessions:
+  /// at the next sign-in they enroll a new one.
+  Future<void> resetMfa(AppUser user) => api.post('/users/${user.id}/mfa/reset');
+
+  /// How the guests of the hotel pay their bookings. Every field is null until the admin configures it.
+  Future<HotelPaymentSettings> paymentSettings() async =>
+      HotelPaymentSettings.fromJson(await api.get('/hotels/${_ownHotelId()}/payment-settings') as Map<String, dynamic>);
+
+  /// Replaces the payment methods of the hotel: from then on it accepts bookings. Blank fields are not offered.
+  Future<HotelPaymentSettings> updatePaymentSettings(HotelPaymentSettings settings) async =>
+      HotelPaymentSettings.fromJson(
+          await api.put('/hotels/${_ownHotelId()}/payment-settings', settings.toJson()) as Map<String, dynamic>);
+
+  int _ownHotelId() => hotelId ?? (throw const DomainException('Tu cuenta no pertenece a un hotel.'));
+
   /// US-27: a booking made at the desk for a guest without an account.
   Future<Stay> createBooking({required int roomId, required DateTime checkIn, required int nights, required String guestName, required String guestEmail}) async {
     final start = DateUtils.dateOnly(checkIn);
@@ -507,9 +715,224 @@ class RemoteHotel {
   Future<void> requestCheckInAssistance(int bookingId, String message) =>
       api.post('/bookings/$bookingId/check-in/assistance', {'message': message.trim()});
 
+  /// Only Pending or Confirmed bookings, before the check-in day. A paid booking gets its payment refunded.
   Future<void> cancelBooking(int bookingId) async {
     await api.post('/bookings/$bookingId/cancel');
     await sync();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Incidents (US-08 / US-09)
+  // ---------------------------------------------------------------------------
+
+  /// US-08: maintenance is notified by the backend; with [blocksRoom] the room goes to Maintenance.
+  Future<void> reportIncident({required int roomId, required String title, required String description,
+      required Priority urgency, required bool blocksRoom}) async {
+    if (title.trim().isEmpty) throw const DomainException('Describe brevemente la incidencia.');
+    final data = await api.post('/incidents', {
+      'roomId': roomId,
+      'title': title.trim(),
+      if (description.trim().isNotEmpty) 'description': description.trim(),
+      'priority': backendIncidentPriority(urgency),
+      'blocksRoom': blocksRoom,
+    }) as Map<String, dynamic>;
+    _upsertIncident(data);
+    // The room may have gone to Maintenance.
+    await sync();
+  }
+
+  /// US-06: damage found while cleaning goes to maintenance as an incident that blocks the room; the task keeps a
+  /// note of it.
+  Future<void> reportImpediment(int taskId, {required String description, required Priority urgency}) async {
+    if (description.trim().isEmpty) throw const DomainException('Describe el desperfecto que encontraste.');
+    if (hasCleaningTasks) {
+      return _taskAction(() => api.post('/cleaning-tasks/$taskId/impediments', {
+            'title': 'Desperfecto detectado en limpieza',
+            'description': description.trim(),
+            'priority': backendIncidentPriority(urgency),
+            'blocksRoom': true,
+          }));
+    }
+    final task = store.taskById(taskId);
+    await reportIncident(
+      roomId: task.roomId,
+      title: 'Desperfecto detectado en limpieza',
+      description: description,
+      urgency: urgency,
+      blocksRoom: true,
+    );
+    task.events.add(TimelineEvent(store.now, 'Impedimento reportado: ${description.trim()}'));
+    store.refresh();
+  }
+
+  /// The incident with its history.
+  Future<void> refreshIncident(int incidentId) async =>
+      _upsertIncident(await api.get('/incidents/$incidentId') as Map<String, dynamic>);
+
+  /// Pending → InProgress. A maintenance staff member starting an unassigned incident takes it.
+  Future<void> startIncident(int incidentId) => _incidentAction(() => api.post('/incidents/$incidentId/start'));
+
+  /// When it blocked its room and nothing else does, the backend sends the room to Cleaning and creates its cleaning
+  /// task; a backend without the housekeeping module leaves the task to this device.
+  Future<void> resolveIncident(int incidentId, String notes) async {
+    if (notes.trim().isEmpty) throw const DomainException('Agrega observaciones sobre la solución.');
+    await _incidentAction(() => api.post('/incidents/$incidentId/resolve', {'resolutionNotes': notes.trim()}));
+    final room = store.roomById(store.incidentById(incidentId).roomId);
+    if (!hasCleaningTasks && room.status == RoomStatus.dirty) store.createCleaningTask(room.id, priority: Priority.high);
+  }
+
+  /// Only an administrator assigns to someone else; maintenance takes an incident with [startIncident].
+  Future<void> assignIncident(int incidentId, int userId) =>
+      _incidentAction(() => api.post('/incidents/$incidentId/assign', {'assigneeUserId': userId}));
+
+  Future<void> changeIncidentPriority(int incidentId, Priority urgency) => _incidentAction(
+      () => api.put('/incidents/$incidentId/priority', {'priority': backendIncidentPriority(urgency)}));
+
+  Future<void> _incidentAction(Future<dynamic> Function() call) async {
+    _upsertIncident(await call() as Map<String, dynamic>);
+    // The room may have changed too (Maintenance → Cleaning).
+    await sync();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cleaning tasks (US-05 / US-06), when the backend has them ([hasCleaningTasks])
+  // ---------------------------------------------------------------------------
+
+  /// The backend's task priorities have the app's names (Low, Normal, High, Urgent).
+  static Priority taskPriority(String value) => Priority.values.asNameMap()[value.toLowerCase()] ?? Priority.normal;
+
+  static String backendTaskPriority(Priority priority) => '${priority.name[0].toUpperCase()}${priority.name.substring(1)}';
+
+  /// The checklist is kept from the previous copy (or a fresh one for the room type); the history comes only with a
+  /// single task, so the list keeps the one already loaded.
+  CleaningTask _task(Map<String, dynamic> data, [CleaningTask? previous]) {
+    final roomId = data['roomId'] as int;
+    final status = switch (data['status']) {
+      'InProgress' => TaskStatus.inProgress,
+      'Completed' => TaskStatus.done,
+      _ => TaskStatus.pending,
+    };
+    var checklist = previous?.checklist;
+    if (checklist == null) {
+      checklist = HotelStore.checklistFor(store.rooms.where((r) => r.id == roomId).firstOrNull?.type ?? RoomType.standard);
+      // Cleaned on another device: its checklist was completed there.
+      if (status == TaskStatus.done) {
+        for (final item in checklist) {
+          item.done = true;
+        }
+      }
+    }
+    final task = CleaningTask(
+      id: data['id'] as int,
+      roomId: roomId,
+      checklist: checklist,
+      createdAt: DateTime.parse(data['createdAt'].toString()).toLocal(),
+      assigneeId: data['assigneeUserId'] as int?,
+      priority: taskPriority(data['priority']?.toString() ?? ''),
+      status: status,
+    )
+      ..startedAt = DateTime.tryParse(data['startedAt']?.toString() ?? '')?.toLocal()
+      ..completedAt = DateTime.tryParse(data['completedAt']?.toString() ?? '')?.toLocal()
+      ..notes = data['notes']?.toString() ?? '';
+    final history = data['history'];
+    if (history is List) {
+      task.events.addAll([
+        for (final entry in history.cast<Map<String, dynamic>>())
+          TimelineEvent(DateTime.parse(entry['occurredAt'].toString()).toLocal(), _taskEventText(entry)),
+      ]);
+    } else if (previous != null) {
+      task.events.addAll(previous.events);
+    }
+    return task;
+  }
+
+  /// The backend's `detail` is in English: the text is rebuilt in Spanish from the action.
+  String _taskEventText(Map<String, dynamic> entry) {
+    final by = entry['actorEmail'] == null ? '' : ' · ${entry['actorEmail']}';
+    final detail = entry['detail']?.toString() ?? '';
+    String userName(String? id) => store.userById(int.tryParse(id ?? ''))?.name ?? 'otra persona';
+    switch (entry['action']) {
+      case 'Created':
+        final priority = taskPriority(RegExp(r'Priority (\w+)').firstMatch(detail)?.group(1) ?? '');
+        final automatic = detail.contains('went to Cleaning') ? ' al pasar la habitación a limpieza' : '';
+        return 'Tarea creada$automatic · prioridad ${priority.label.toLowerCase()}$by';
+      case 'Assigned':
+      case 'Reassigned':
+        final match = RegExp(r'Assigned to user (\d+)( \(least workload\))?(, was user (\d+))?').firstMatch(detail);
+        final to = userName(match?.group(1));
+        if (match?.group(4) != null) return 'Reasignada de ${userName(match!.group(4))} a $to$by';
+        return '${match?.group(2) != null ? 'Asignada automáticamente' : 'Asignada'} a $to$by';
+      case 'Started':
+        return 'Limpieza iniciada$by';
+      case 'PriorityChanged':
+        final parts = detail.split('→').map((p) => taskPriority(p.trim()).label).toList();
+        return '${parts.length == 2 ? 'Prioridad: ${parts[0]} → ${parts[1]}' : 'Prioridad cambiada'}$by';
+      case 'ImpedimentReported':
+        return 'Impedimento reportado: $detail$by';
+      case 'Completed':
+        return 'Habitación marcada como limpia$by';
+      case 'Cancelled':
+        return 'Tarea cancelada$by';
+      default:
+        return '${entry['action']}$by';
+    }
+  }
+
+  /// Puts the task the backend answered (with its history) in the store; a cancelled task leaves it.
+  void _upsertTask(Map<String, dynamic> data) {
+    final previous = store.tasks.where((t) => t.id == data['id']).firstOrNull;
+    store.tasks.remove(previous);
+    if (data['status'] != 'Cancelled') store.tasks.add(_task(data, previous));
+    store.refresh();
+  }
+
+  Future<void> _taskAction(Future<dynamic> Function() call) async {
+    _upsertTask(await call() as Map<String, dynamic>);
+    // Starting or completing a task changes its room; an impediment can block it.
+    await sync();
+  }
+
+  /// The task with its history.
+  Future<void> refreshCleaningTask(int taskId) async =>
+      _upsertTask(await api.get('/cleaning-tasks/$taskId') as Map<String, dynamic>);
+
+  /// An extra cleaning (rooms that go to Cleaning get their task by themselves). Without [assigneeId] the backend
+  /// assigns it by workload when the automatic assignment is on.
+  Future<void> createCleaningTask(int roomId, {Priority priority = Priority.normal, int? assigneeId}) =>
+      _taskAction(() => api.post('/cleaning-tasks', {
+            'roomId': roomId,
+            'priority': backendTaskPriority(priority),
+            'assigneeUserId': ?assigneeId,
+          }));
+
+  /// Without [userId], to the housekeeping staff member with the fewest open tasks.
+  Future<void> assignCleaningTask(int taskId, int? userId) =>
+      _taskAction(() => api.post('/cleaning-tasks/$taskId/assign', {'assigneeUserId': userId}));
+
+  /// Pending → InProgress and the room goes to Cleaning. A housekeeper starting an unassigned task takes it.
+  Future<void> startCleaningTask(int taskId) => _taskAction(() => api.post('/cleaning-tasks/$taskId/start'));
+
+  /// InProgress → Completed and the room becomes Available. The checklist (on this device) must be done first.
+  Future<void> completeCleaningTask(int taskId) async {
+    final missing = store.taskById(taskId).missingRequired;
+    if (missing.isNotEmpty) {
+      throw DomainException('Completa los ítems obligatorios:\n• ${missing.map((m) => m.label).join('\n• ')}');
+    }
+    await _taskAction(() => api.post('/cleaning-tasks/$taskId/complete'));
+  }
+
+  Future<void> setCleaningTaskPriority(int taskId, Priority priority) =>
+      _taskAction(() => api.put('/cleaning-tasks/$taskId/priority', {'priority': backendTaskPriority(priority)}));
+
+  /// The room status does not change.
+  Future<void> cancelCleaningTask(int taskId, {String reason = ''}) => _taskAction(
+      () => api.post('/cleaning-tasks/$taskId/cancel', {if (reason.trim().isNotEmpty) 'reason': reason.trim()}));
+
+  /// Administrators only: new tasks without an assignee go to the least loaded housekeeper.
+  Future<void> setAutoAssignCleaning(bool value) async {
+    final settings = await api.put('/cleaning-tasks/settings', {'autoAssign': value}) as Map<String, dynamic>;
+    store.autoAssignCleaning = settings['autoAssign'] == true;
+    store.refresh();
   }
 
   /// US-18 / US-24: revenue, bookings and occupancy of the month.

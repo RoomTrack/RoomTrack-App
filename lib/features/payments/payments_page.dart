@@ -4,6 +4,7 @@ import '../../domain/models.dart';
 import '../../shared/format.dart';
 import '../../shared/ui.dart';
 import '../front_desk/stay_detail_page.dart';
+import 'payment_settings_page.dart';
 
 /// Charges, refunds and receipts by date, with resend (US-17).
 class PaymentsPage extends StatefulWidget {
@@ -27,6 +28,15 @@ class _PaymentsPageState extends State<PaymentsPage> {
       return ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
+          if (store.currentUser?.role == UserRole.admin && store.remote?.hotelId != null) ...[
+            AppButton(
+              text: 'Medios de pago del hotel',
+              icon: Icons.account_balance_wallet_outlined,
+              outlined: true,
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PaymentSettingsPage())),
+            ),
+            const SizedBox(height: 10),
+          ],
           Wrap(
             spacing: 8,
             runSpacing: 4,

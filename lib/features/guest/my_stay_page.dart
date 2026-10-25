@@ -6,6 +6,7 @@ import '../../core/seed.dart';
 import '../../domain/models.dart';
 import '../../shared/format.dart';
 import '../../shared/ui.dart';
+import '../front_desk/stay_detail_page.dart' show cancelRemoteBooking;
 import '../payments/folio_card.dart';
 import '../payments/payment_sheet.dart';
 import 'guest_chat_page.dart';
@@ -711,6 +712,12 @@ class _RemoteCheckInState extends State<_RemoteCheckIn> {
           AppButton(text: 'Completar check-in', icon: Icons.key_outlined, dark: true, loading: _sending, onPressed: _send),
         ],
         TextButton.icon(onPressed: _askForHelp, icon: const Icon(Icons.support_agent), label: const Text('¿Problemas? Pedir ayuda a recepción')),
+        TextButton.icon(
+          onPressed: () => cancelRemoteBooking(context, stay),
+          style: TextButton.styleFrom(foregroundColor: kError),
+          icon: const Icon(Icons.event_busy_outlined),
+          label: const Text('Cancelar mi reserva'),
+        ),
       ],
     );
   }

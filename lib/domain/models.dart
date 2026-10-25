@@ -266,6 +266,9 @@ class CleaningTask {
   DateTime? completedAt;
   final List<TimelineEvent> events = [];
 
+  /// Instructions for housekeeping (from the backend).
+  String notes = '';
+
   CleaningTask({
     required this.id,
     required this.roomId,
@@ -306,6 +309,9 @@ class Incident {
   bool escalated;
   bool recurring;
   final List<TimelineEvent> events = [];
+
+  /// E-mail of the reporter as the backend recorded it (other staff are not in the store of every role).
+  String? reportedByEmail;
 
   Incident({
     required this.id,

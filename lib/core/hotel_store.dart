@@ -116,6 +116,9 @@ class HotelStore extends ChangeNotifier {
 
   bool get isRemote => remote != null;
 
+  /// The backend when it has the cleaning tasks; null when they live on this device (demo or an older backend).
+  RemoteHotel? get cleaningBackend => remote?.hasCleaningTasks == true ? remote : null;
+
   /// Lets the backend sync tell the screens that the data changed.
   void refresh() => notifyListeners();
 
@@ -1250,7 +1253,8 @@ class HotelStore extends ChangeNotifier {
 
   /// Time-based rules: escalations, delays, preventive work and scheduled reports.
   void runChecks() {
-    for (final incident in incidents.where((i) => i.isOpen && i.urgency == Priority.urgent && !i.escalated)) {
+    // The backend escalates its own incidents (scheduled job); only on-device ones are checked here.
+    for (final incident in incidents.where((i) => i.isOpen && i.urgency == Priority.urgent && !i.escalated && (remote == null || i.preventive))) {
       if (now.difference(incident.createdAt) >= criticalIncidentLimit) {
         incident.escalated = true;
         incident.events.add(TimelineEvent(now, 'Escalada al administrador por demora'));

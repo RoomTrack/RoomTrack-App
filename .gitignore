@@ -49,4 +49,6 @@ app.*.map.json
 
 # Demo account secrets created by tool/seed_backend.py
 tool/demo_accounts.local.json
+# Production account for the read-only probe (never commit)
+tool/prod_probe.local.json
 __pycache__/

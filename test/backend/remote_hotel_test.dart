@@ -9,7 +9,8 @@ import 'package:roomtrack/core/hotel_store.dart';
 import 'package:roomtrack/domain/models.dart';
 
 /// A fake gateway answering the routes the app uses, with the shapes of the real backend.
-RemoteHotel fakeBackend({required Map<String, Object?> me, Map<String, Object?> signIn = const {}}) {
+RemoteHotel fakeBackend({required Map<String, Object?> me, Map<String, Object?> signIn = const {},
+    Map<String, Object?> extra = const {}, List<String>? calls}) {
   final routes = <String, Object?>{
     'POST /authentication/sign-in': signIn,
     'GET /users/me': me,
@@ -42,10 +43,12 @@ RemoteHotel fakeBackend({required Map<String, Object?> me, Map<String, Object?> 
       'paymentDate': '2026-10-01 10:05:00',
     },
     'GET /bookings/7/check-in': {'accessCode': '304911'},
+    ...extra,
   };
   final client = MockClient((request) async {
     final path = request.url.path.replaceFirst(RegExp(r'^.*?(?=/[a-z])'), '');
     final key = '${request.method} $path';
+    calls?.add(request.body.isEmpty ? key : '$key ${request.body}');
     if (!routes.containsKey(key)) return http.Response(jsonEncode({'title': 'Not found', 'status': 404}), 404);
     return http.Response(jsonEncode(routes[key]), 200, headers: {'content-type': 'application/json; charset=utf-8'});
   });
@@ -107,5 +110,63 @@ void main() {
     expect(error.message, 'Ese código ya se usó. Espera el siguiente de tu app autenticadora.');
     final validation = ApiClient.problem(400, jsonEncode({'errors': {'email': ['El correo no es válido.']}}));
     expect(validation.message, 'El correo no es válido.');
+  });
+
+  test('el administrador configura los medios de pago del hotel', () async {
+    final calls = <String>[];
+    final settings = {
+      'hotelId': 1, 'acceptsBookings': true, 'accountHolder': 'Casa Aurora S.A.C.', 'yapeNumber': '987654321',
+      'plinNumber': null, 'bankName': null, 'bankAccountNumber': null, 'bankAccountCci': null,
+    };
+    final remote = fakeBackend(
+      me: {'id': 1, 'email': 'admin@roomtrack.pe', 'firstName': 'Ana', 'lastName': 'Torres', 'role': 'admin', 'hotelId': 1},
+      signIn: {'id': 1, 'token': 'access'},
+      extra: {'GET /hotels/1/payment-settings': {...settings, 'acceptsBookings': false}, 'PUT /hotels/1/payment-settings': settings},
+      calls: calls,
+    );
+    await remote.signIn('admin@roomtrack.pe', 'x');
+
+    expect((await remote.paymentSettings()).acceptsBookings, isFalse);
+    final saved = await remote.updatePaymentSettings(
+        const HotelPaymentSettings(accountHolder: ' Casa Aurora S.A.C. ', yapeNumber: '987654321', plinNumber: ' '));
+    expect(saved.acceptsBookings, isTrue);
+    // Blank methods go as null: not offered.
+    final put = jsonDecode(calls.last.substring('PUT /hotels/1/payment-settings '.length)) as Map<String, dynamic>;
+    expect(put, {
+      'accountHolder': 'Casa Aurora S.A.C.', 'yapeNumber': '987654321', 'plinNumber': null,
+      'bankName': null, 'bankAccountNumber': null, 'bankAccountCci': null,
+    });
+  });
+
+  test('cancelar una reserva, restablecer el MFA y cerrar todas las sesiones', () async {
+    final calls = <String>[];
+    final remote = fakeBackend(
+      me: {'id': 1, 'email': 'admin@roomtrack.pe', 'firstName': 'Ana', 'lastName': 'Torres', 'role': 'admin', 'hotelId': 1},
+      signIn: {'id': 1, 'token': 'access', 'refreshToken': 'refresh'},
+      extra: {'POST /bookings/8/cancel': {'id': 8, 'status': 'Cancelled'}, 'POST /users/3/mfa/reset': {'message': 'ok'}, 'POST /authentication/sign-out-all': null},
+      calls: calls,
+    );
+    await remote.signIn('admin@roomtrack.pe', 'x');
+
+    await remote.cancelBooking(8);
+    await remote.resetMfa(remote.store.users.firstWhere((u) => u.id == 3));
+    await remote.signOutEverywhere();
+
+    expect(calls, containsAllInOrder(['POST /bookings/8/cancel', 'POST /users/3/mfa/reset', 'POST /authentication/sign-out-all']));
+    expect(remote.api.session, isNull);
+    expect(remote.store.currentUser, isNull);
+  });
+
+  test('cada regla rota de los medios de pago llega en español', () {
+    final error = ApiClient.problem(400, jsonEncode({
+      'code': 'validation.failed',
+      'errors': {'yapeNumber': ['Yape must be a 9-digit mobile.']},
+      'violations': [
+        {'field': 'accountHolder', 'code': 'payment_settings.account_holder_required', 'message': 'Required.'},
+        {'field': 'yapeNumber', 'code': 'payment_settings.yape_number_invalid', 'message': 'Yape must be a 9-digit mobile.'},
+      ],
+    }));
+    expect(error.message,
+        'Indica a nombre de quién se paga.\nEl número de Yape debe ser un celular de 9 dígitos que empiece con 9.');
   });
 }

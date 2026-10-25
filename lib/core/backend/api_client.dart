@@ -163,6 +163,16 @@ class ApiClient {
     final known = _spanish[code];
     if (known != null) return ApiException(statusCode, known, code: code);
 
+    // Each broken rule carries its own code (e.g. `payment_settings.cci_invalid`).
+    final violations = parsed?['violations'];
+    if (violations is List) {
+      final messages = violations
+          .map((v) => v is Map ? _spanish[v['code']?.toString()] : null)
+          .whereType<String>()
+          .toSet();
+      if (messages.isNotEmpty) return ApiException(statusCode, messages.join('\n'), code: code);
+    }
+
     final errors = parsed?['errors'];
     if (errors is Map && errors.isNotEmpty) {
       final messages = errors.values
@@ -216,6 +226,18 @@ class ApiClient {
     'booking.check_in_in_past': 'La fecha de llegada no puede ser pasada.',
     'booking.check_out_not_after_check_in': 'La salida debe ser al menos un día después de la llegada.',
     'booking.hotel_payment_settings_missing': 'El hotel aún no configuró sus medios de pago.',
+    'booking.cancellation_not_allowed': 'Solo se cancelan reservas pendientes o confirmadas.',
+    'booking.cancellation_too_late': 'Ya no se puede cancelar: el check-in es hoy o ya pasó.',
+    'payment_settings.account_holder_required': 'Indica a nombre de quién se paga.',
+    'payment_settings.account_holder_length': 'El titular debe tener de 2 a 100 caracteres.',
+    'payment_settings.method_required': 'Configura al menos un medio de pago: Yape, Plin o una cuenta bancaria.',
+    'payment_settings.yape_number_invalid': 'El número de Yape debe ser un celular de 9 dígitos que empiece con 9.',
+    'payment_settings.plin_number_invalid': 'El número de Plin debe ser un celular de 9 dígitos que empiece con 9.',
+    'payment_settings.bank_name_required': 'Indica el banco de la cuenta.',
+    'payment_settings.bank_name_length': 'El nombre del banco debe tener de 2 a 60 caracteres.',
+    'payment_settings.bank_account_number_required': 'Indica el número de cuenta del banco.',
+    'payment_settings.bank_account_number_invalid': 'El número de cuenta debe tener de 8 a 20 dígitos.',
+    'payment_settings.cci_invalid': 'El CCI debe tener 20 dígitos.',
     'payment.booking_already_paid': 'Esta reserva ya está pagada.',
     'payment.booking_not_pending': 'Solo se registran pagos de reservas pendientes.',
     'payment.operation_number_required': 'Ingresa el número de operación.',

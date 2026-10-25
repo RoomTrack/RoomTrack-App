@@ -126,6 +126,26 @@ class _ProfilePageState extends State<ProfilePage> {
               }
             },
           ),
+          if (store.isRemote) ...[
+            const SizedBox(height: 10),
+            TextButton.icon(
+              style: TextButton.styleFrom(foregroundColor: kError),
+              icon: const Icon(Icons.devices_other_outlined),
+              label: const Text('Cerrar sesión en todos los dispositivos'),
+              onPressed: () async {
+                final ok = await confirm(
+                  context,
+                  'Cerrar todas las sesiones',
+                  'Tu cuenta se cerrará en este y en todos los demás dispositivos. Tendrás que volver a iniciar sesión.',
+                  action: 'Cerrar todas',
+                );
+                if (!ok || !context.mounted) return;
+                // Even if the call fails the local session ends; the shell goes back to the login.
+                await runAsync(context, () => store.remote!.signOutEverywhere());
+                await SessionStore.clear();
+              },
+            ),
+          ],
         ],
       );
     });

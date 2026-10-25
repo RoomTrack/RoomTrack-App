@@ -71,6 +71,50 @@ class MonthlyMetrics {
   const MonthlyMetrics(this.revenue, this.bookings, this.occupancyRate, this.cancelled);
 }
 
+/// Payment methods of a hotel (`HotelPaymentSettingsResource`).
+class HotelPaymentSettings {
+  final bool acceptsBookings;
+  final String? accountHolder;
+  final String? yapeNumber;
+  final String? plinNumber;
+  final String? bankName;
+  final String? bankAccountNumber;
+  final String? bankAccountCci;
+
+  const HotelPaymentSettings({
+    this.acceptsBookings = false,
+    this.accountHolder,
+    this.yapeNumber,
+    this.plinNumber,
+    this.bankName,
+    this.bankAccountNumber,
+    this.bankAccountCci,
+  });
+
+  factory HotelPaymentSettings.fromJson(Map<String, dynamic> data) => HotelPaymentSettings(
+        acceptsBookings: data['acceptsBookings'] == true,
+        accountHolder: data['accountHolder'] as String?,
+        yapeNumber: data['yapeNumber'] as String?,
+        plinNumber: data['plinNumber'] as String?,
+        bankName: data['bankName'] as String?,
+        bankAccountNumber: data['bankAccountNumber'] as String?,
+        bankAccountCci: data['bankAccountCci'] as String?,
+      );
+
+  /// Blank values go as null: that method is not offered.
+  Map<String, dynamic> toJson() {
+    String? clean(String? value) => (value == null || value.trim().isEmpty) ? null : value.trim();
+    return {
+      'accountHolder': clean(accountHolder),
+      'yapeNumber': clean(yapeNumber),
+      'plinNumber': clean(plinNumber),
+      'bankName': clean(bankName),
+      'bankAccountNumber': clean(bankAccountNumber),
+      'bankAccountCci': clean(bankAccountCci),
+    };
+  }
+}
+
 /// The RoomTrack backend seen from the app.
 ///
 /// It owns the session, copies what the backend knows (users, rooms, bookings, payments) into the
@@ -192,6 +236,17 @@ class RemoteHotel {
 
   Future<void> changePassword(String current, String newPassword) =>
       api.post('/users/change-password', {'currentPassword': current, 'newPassword': newPassword});
+
+  /// Ends every session of the account, on every device (this one included).
+  Future<void> signOutEverywhere() async {
+    try {
+      await api.post('/authentication/sign-out-all');
+    } finally {
+      api.setSession(null);
+      me = null;
+      store.signOut();
+    }
+  }
 
   static String _tokenFrom(String linkOrToken) {
     final text = linkOrToken.trim();
@@ -464,6 +519,21 @@ class RemoteHotel {
     await sync();
   }
 
+  /// Removes the authenticator and recovery codes of a collaborator (e.g. a lost phone) and ends their sessions:
+  /// at the next sign-in they enroll a new one.
+  Future<void> resetMfa(AppUser user) => api.post('/users/${user.id}/mfa/reset');
+
+  /// How the guests of the hotel pay their bookings. Every field is null until the admin configures it.
+  Future<HotelPaymentSettings> paymentSettings() async =>
+      HotelPaymentSettings.fromJson(await api.get('/hotels/${_ownHotelId()}/payment-settings') as Map<String, dynamic>);
+
+  /// Replaces the payment methods of the hotel: from then on it accepts bookings. Blank fields are not offered.
+  Future<HotelPaymentSettings> updatePaymentSettings(HotelPaymentSettings settings) async =>
+      HotelPaymentSettings.fromJson(
+          await api.put('/hotels/${_ownHotelId()}/payment-settings', settings.toJson()) as Map<String, dynamic>);
+
+  int _ownHotelId() => hotelId ?? (throw const DomainException('Tu cuenta no pertenece a un hotel.'));
+
   /// US-27: a booking made at the desk for a guest without an account.
   Future<Stay> createBooking({required int roomId, required DateTime checkIn, required int nights, required String guestName, required String guestEmail}) async {
     final start = DateUtils.dateOnly(checkIn);
@@ -507,6 +577,7 @@ class RemoteHotel {
   Future<void> requestCheckInAssistance(int bookingId, String message) =>
       api.post('/bookings/$bookingId/check-in/assistance', {'message': message.trim()});
 
+  /// Only Pending or Confirmed bookings, before the check-in day. A paid booking gets its payment refunded.
   Future<void> cancelBooking(int bookingId) async {
     await api.post('/bookings/$bookingId/cancel');
     await sync();

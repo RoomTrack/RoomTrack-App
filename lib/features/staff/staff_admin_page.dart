@@ -47,6 +47,7 @@ class StaffAdminPage extends StatelessWidget {
                     itemBuilder: (_) => [
                       const PopupMenuItem(value: 'role', child: Text('Cambiar rol')),
                       PopupMenuItem(value: 'toggle', child: Text(user.active ? 'Desactivar cuenta' : 'Reactivar cuenta')),
+                      if (store.isRemote) const PopupMenuItem(value: 'mfa', child: Text('Restablecer autenticador')),
                     ],
                   ),
                 ],
@@ -58,6 +59,18 @@ class StaffAdminPage extends StatelessWidget {
   }
 
   Future<void> _onAction(BuildContext context, HotelStore store, AppUser user, String action) async {
+    if (action == 'mfa') {
+      final ok = await confirm(
+        context,
+        'Restablecer autenticador',
+        'Se borrará la app autenticadora y los códigos de recuperación de ${user.name}, y se cerrarán sus sesiones. '
+            'Al volver a entrar tendrá que registrar un autenticador nuevo.',
+        action: 'Restablecer',
+      );
+      if (!ok || !context.mounted) return;
+      await runAsync(context, () => store.remote!.resetMfa(user), success: 'Autenticador restablecido. ${user.name} lo configurará al entrar.');
+      return;
+    }
     if (action == 'toggle') {
       if (user.active) {
         final ok = await confirm(context, 'Desactivar cuenta', '${user.name} perderá el acceso de inmediato. Sus tareas abiertas se reasignarán.',

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/hotel_store.dart';
 import '../../domain/models.dart';
 import '../../shared/format.dart';
 import '../../shared/ui.dart';
@@ -17,7 +18,15 @@ class StayDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StoreBuilder(builder: (context, store) {
-      final stay = store.stayById(stayId);
+      // A cancelled booking leaves the store on the next sync.
+      final found = store.stays.where((s) => s.id == stayId).firstOrNull;
+      if (found == null) {
+        return Scaffold(
+          appBar: AppBar(),
+          body: const Center(child: Text('Esta reserva ya no está activa.', style: TextStyle(color: kMuted))),
+        );
+      }
+      final stay = found;
       final room = stay.roomId == null ? null : store.roomById(stay.roomId!);
       final balance = store.balanceOf(stay);
       final receipts = store.receipts.where((r) => r.stayId == stay.id).toList();
@@ -134,5 +143,24 @@ class StayDetailPage extends StatelessWidget {
           const InfoRow(Icons.phone_iphone, 'Reserva pagada: el huésped completa su check-in digital desde la app.', color: kSuccess),
         if (stay.status == StayStatus.checkedIn)
           const InfoRow(Icons.info_outline, 'El check-out y los cargos adicionales llegan con la siguiente fase del backend.'),
+        if (stay.status == StayStatus.reserved) ...[
+          const SizedBox(height: 10),
+          AppButton(text: 'Cancelar reserva', icon: Icons.event_busy_outlined, outlined: true, onPressed: () => cancelRemoteBooking(context, stay)),
+        ],
       ];
+}
+
+/// Confirms and cancels a booking in the backend; returns true when it was cancelled.
+Future<bool> cancelRemoteBooking(BuildContext context, Stay stay) async {
+  final ok = await confirm(
+    context,
+    'Cancelar reserva',
+    stay.awaitingPayment
+        ? 'Las noches quedarán libres de inmediato y avisaremos a ${stay.guestEmail} por correo.'
+        : 'La reserva ya está pagada: el pago quedará como reembolsado (la devolución se hace fuera de la app). '
+            'Avisaremos a ${stay.guestEmail} por correo.',
+    action: 'Cancelar reserva',
+  );
+  if (!ok || !context.mounted) return false;
+  return runAsync(context, () => HotelStore.instance.remote!.cancelBooking(stay.id), success: 'Reserva cancelada.');
 }

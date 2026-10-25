@@ -263,6 +263,14 @@ class RemoteHotel {
   /// Every hotel staff member sees the incidents of their hotel (a chain admin would have to pick one).
   bool get _seesIncidents => (store.currentUser?.role.isStaff ?? false) && hotelId != null;
 
+  /// The backend has the cleaning tasks (US-05 / US-06). False until a sync finds them, and on backends without the
+  /// housekeeping module: there the tasks stay on this device as before.
+  bool hasCleaningTasks = false;
+
+  /// Housekeeping, reception and administrators (not maintenance).
+  bool get _seesCleaningTasks =>
+      const {UserRole.admin, UserRole.reception, UserRole.housekeeping}.contains(store.currentUser?.role) && hotelId != null;
+
   bool get _seesPayments {
     final role = store.currentUser?.role;
     return role == UserRole.admin || role == UserRole.reception || role == UserRole.guest;
@@ -276,10 +284,12 @@ class RemoteHotel {
 
     final visibleRooms = rooms.where((r) => hotelId == null || r['hotelId'] == hotelId).map(_room).toList()
       ..sort((a, b) => a.number.compareTo(b.number));
-    for (final room in visibleRooms) {
-      // The backend has one Cleaning status; a cleaning already started on a device stays "en limpieza".
-      final local = store.rooms.where((r) => r.id == room.id).firstOrNull;
-      if (room.status == RoomStatus.dirty && local?.status == RoomStatus.cleaning) room.status = RoomStatus.cleaning;
+    if (!hasCleaningTasks) {
+      for (final room in visibleRooms) {
+        // The backend has one Cleaning status; a cleaning already started on a device stays "en limpieza".
+        final local = store.rooms.where((r) => r.id == room.id).firstOrNull;
+        if (room.status == RoomStatus.dirty && local?.status == RoomStatus.cleaning) room.status = RoomStatus.cleaning;
+      }
     }
     store.rooms
       ..clear()
@@ -310,6 +320,32 @@ class RemoteHotel {
       } on ApiException catch (e) {
         // A backend without the incidents module (an older local one) keeps them on this device.
         if (e.statusCode != 404) rethrow;
+      }
+    }
+
+    // US-05 / US-06: with the backend's cleaning tasks the checklist still lives on this device (it has none).
+    if (_seesCleaningTasks) {
+      try {
+        final tasks = (await api.get('/cleaning-tasks?limit=500') as List).cast<Map<String, dynamic>>();
+        final previous = {for (final t in store.tasks) t.id: t};
+        store.tasks
+          ..clear()
+          ..addAll(tasks.where((data) => data['status'] != 'Cancelled').map((data) => _task(data, previous[data['id']])));
+        hasCleaningTasks = true;
+        if (store.currentUser?.role != UserRole.housekeeping) {
+          final settings = await api.get('/cleaning-tasks/settings') as Map<String, dynamic>;
+          store.autoAssignCleaning = settings['autoAssign'] == true;
+        }
+      } on ApiException catch (e) {
+        // A backend without the housekeeping module keeps the tasks on this device.
+        if (e.statusCode != 404) rethrow;
+        hasCleaningTasks = false;
+      }
+    }
+    if (hasCleaningTasks) {
+      // The backend has one Cleaning status: a room whose task was started is "en limpieza".
+      for (final room in store.rooms.where((r) => r.status == RoomStatus.dirty)) {
+        if (store.tasks.any((t) => t.roomId == room.id && t.status == TaskStatus.inProgress)) room.status = RoomStatus.cleaning;
       }
     }
 
@@ -705,9 +741,18 @@ class RemoteHotel {
     await sync();
   }
 
-  /// US-06: damage found while cleaning goes to maintenance as an incident; the task keeps a note of it.
+  /// US-06: damage found while cleaning goes to maintenance as an incident that blocks the room; the task keeps a
+  /// note of it.
   Future<void> reportImpediment(int taskId, {required String description, required Priority urgency}) async {
     if (description.trim().isEmpty) throw const DomainException('Describe el desperfecto que encontraste.');
+    if (hasCleaningTasks) {
+      return _taskAction(() => api.post('/cleaning-tasks/$taskId/impediments', {
+            'title': 'Desperfecto detectado en limpieza',
+            'description': description.trim(),
+            'priority': backendIncidentPriority(urgency),
+            'blocksRoom': true,
+          }));
+    }
     final task = store.taskById(taskId);
     await reportIncident(
       roomId: task.roomId,
@@ -727,13 +772,13 @@ class RemoteHotel {
   /// Pending → InProgress. A maintenance staff member starting an unassigned incident takes it.
   Future<void> startIncident(int incidentId) => _incidentAction(() => api.post('/incidents/$incidentId/start'));
 
-  /// When it blocked its room and nothing else does, the backend sends the room to Cleaning: housekeeping (still on
-  /// this device) gets the task.
+  /// When it blocked its room and nothing else does, the backend sends the room to Cleaning and creates its cleaning
+  /// task; a backend without the housekeeping module leaves the task to this device.
   Future<void> resolveIncident(int incidentId, String notes) async {
     if (notes.trim().isEmpty) throw const DomainException('Agrega observaciones sobre la solución.');
     await _incidentAction(() => api.post('/incidents/$incidentId/resolve', {'resolutionNotes': notes.trim()}));
     final room = store.roomById(store.incidentById(incidentId).roomId);
-    if (room.status == RoomStatus.dirty) store.createCleaningTask(room.id, priority: Priority.high);
+    if (!hasCleaningTasks && room.status == RoomStatus.dirty) store.createCleaningTask(room.id, priority: Priority.high);
   }
 
   /// Only an administrator assigns to someone else; maintenance takes an incident with [startIncident].
@@ -747,6 +792,147 @@ class RemoteHotel {
     _upsertIncident(await call() as Map<String, dynamic>);
     // The room may have changed too (Maintenance → Cleaning).
     await sync();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cleaning tasks (US-05 / US-06), when the backend has them ([hasCleaningTasks])
+  // ---------------------------------------------------------------------------
+
+  /// The backend's task priorities have the app's names (Low, Normal, High, Urgent).
+  static Priority taskPriority(String value) => Priority.values.asNameMap()[value.toLowerCase()] ?? Priority.normal;
+
+  static String backendTaskPriority(Priority priority) => '${priority.name[0].toUpperCase()}${priority.name.substring(1)}';
+
+  /// The checklist is kept from the previous copy (or a fresh one for the room type); the history comes only with a
+  /// single task, so the list keeps the one already loaded.
+  CleaningTask _task(Map<String, dynamic> data, [CleaningTask? previous]) {
+    final roomId = data['roomId'] as int;
+    final status = switch (data['status']) {
+      'InProgress' => TaskStatus.inProgress,
+      'Completed' => TaskStatus.done,
+      _ => TaskStatus.pending,
+    };
+    var checklist = previous?.checklist;
+    if (checklist == null) {
+      checklist = HotelStore.checklistFor(store.rooms.where((r) => r.id == roomId).firstOrNull?.type ?? RoomType.standard);
+      // Cleaned on another device: its checklist was completed there.
+      if (status == TaskStatus.done) {
+        for (final item in checklist) {
+          item.done = true;
+        }
+      }
+    }
+    final task = CleaningTask(
+      id: data['id'] as int,
+      roomId: roomId,
+      checklist: checklist,
+      createdAt: DateTime.parse(data['createdAt'].toString()).toLocal(),
+      assigneeId: data['assigneeUserId'] as int?,
+      priority: taskPriority(data['priority']?.toString() ?? ''),
+      status: status,
+    )
+      ..startedAt = DateTime.tryParse(data['startedAt']?.toString() ?? '')?.toLocal()
+      ..completedAt = DateTime.tryParse(data['completedAt']?.toString() ?? '')?.toLocal()
+      ..notes = data['notes']?.toString() ?? '';
+    final history = data['history'];
+    if (history is List) {
+      task.events.addAll([
+        for (final entry in history.cast<Map<String, dynamic>>())
+          TimelineEvent(DateTime.parse(entry['occurredAt'].toString()).toLocal(), _taskEventText(entry)),
+      ]);
+    } else if (previous != null) {
+      task.events.addAll(previous.events);
+    }
+    return task;
+  }
+
+  /// The backend's `detail` is in English: the text is rebuilt in Spanish from the action.
+  String _taskEventText(Map<String, dynamic> entry) {
+    final by = entry['actorEmail'] == null ? '' : ' · ${entry['actorEmail']}';
+    final detail = entry['detail']?.toString() ?? '';
+    String userName(String? id) => store.userById(int.tryParse(id ?? ''))?.name ?? 'otra persona';
+    switch (entry['action']) {
+      case 'Created':
+        final priority = taskPriority(RegExp(r'Priority (\w+)').firstMatch(detail)?.group(1) ?? '');
+        final automatic = detail.contains('went to Cleaning') ? ' al pasar la habitación a limpieza' : '';
+        return 'Tarea creada$automatic · prioridad ${priority.label.toLowerCase()}$by';
+      case 'Assigned':
+      case 'Reassigned':
+        final match = RegExp(r'Assigned to user (\d+)( \(least workload\))?(, was user (\d+))?').firstMatch(detail);
+        final to = userName(match?.group(1));
+        if (match?.group(4) != null) return 'Reasignada de ${userName(match!.group(4))} a $to$by';
+        return '${match?.group(2) != null ? 'Asignada automáticamente' : 'Asignada'} a $to$by';
+      case 'Started':
+        return 'Limpieza iniciada$by';
+      case 'PriorityChanged':
+        final parts = detail.split('→').map((p) => taskPriority(p.trim()).label).toList();
+        return '${parts.length == 2 ? 'Prioridad: ${parts[0]} → ${parts[1]}' : 'Prioridad cambiada'}$by';
+      case 'ImpedimentReported':
+        return 'Impedimento reportado: $detail$by';
+      case 'Completed':
+        return 'Habitación marcada como limpia$by';
+      case 'Cancelled':
+        return 'Tarea cancelada$by';
+      default:
+        return '${entry['action']}$by';
+    }
+  }
+
+  /// Puts the task the backend answered (with its history) in the store; a cancelled task leaves it.
+  void _upsertTask(Map<String, dynamic> data) {
+    final previous = store.tasks.where((t) => t.id == data['id']).firstOrNull;
+    store.tasks.remove(previous);
+    if (data['status'] != 'Cancelled') store.tasks.add(_task(data, previous));
+    store.refresh();
+  }
+
+  Future<void> _taskAction(Future<dynamic> Function() call) async {
+    _upsertTask(await call() as Map<String, dynamic>);
+    // Starting or completing a task changes its room; an impediment can block it.
+    await sync();
+  }
+
+  /// The task with its history.
+  Future<void> refreshCleaningTask(int taskId) async =>
+      _upsertTask(await api.get('/cleaning-tasks/$taskId') as Map<String, dynamic>);
+
+  /// An extra cleaning (rooms that go to Cleaning get their task by themselves). Without [assigneeId] the backend
+  /// assigns it by workload when the automatic assignment is on.
+  Future<void> createCleaningTask(int roomId, {Priority priority = Priority.normal, int? assigneeId}) =>
+      _taskAction(() => api.post('/cleaning-tasks', {
+            'roomId': roomId,
+            'priority': backendTaskPriority(priority),
+            'assigneeUserId': ?assigneeId,
+          }));
+
+  /// Without [userId], to the housekeeping staff member with the fewest open tasks.
+  Future<void> assignCleaningTask(int taskId, int? userId) =>
+      _taskAction(() => api.post('/cleaning-tasks/$taskId/assign', {'assigneeUserId': userId}));
+
+  /// Pending → InProgress and the room goes to Cleaning. A housekeeper starting an unassigned task takes it.
+  Future<void> startCleaningTask(int taskId) => _taskAction(() => api.post('/cleaning-tasks/$taskId/start'));
+
+  /// InProgress → Completed and the room becomes Available. The checklist (on this device) must be done first.
+  Future<void> completeCleaningTask(int taskId) async {
+    final missing = store.taskById(taskId).missingRequired;
+    if (missing.isNotEmpty) {
+      throw DomainException('Completa los ítems obligatorios:\n• ${missing.map((m) => m.label).join('\n• ')}');
+    }
+    await _taskAction(() => api.post('/cleaning-tasks/$taskId/complete'));
+  }
+
+  Future<void> setCleaningTaskPriority(int taskId, Priority priority) =>
+      _taskAction(() => api.put('/cleaning-tasks/$taskId/priority', {'priority': backendTaskPriority(priority)}));
+
+  /// The room status does not change.
+  Future<void> cancelCleaningTask(int taskId, {String reason = ''}) => _taskAction(
+      () => api.post('/cleaning-tasks/$taskId/cancel', {if (reason.trim().isNotEmpty) 'reason': reason.trim()}));
+
+  /// Administrators only: new tasks without an assignee go to the least loaded housekeeper.
+  Future<void> setAutoAssignCleaning(bool value) async {
+    final settings = await api.put('/cleaning-tasks/settings', {'autoAssign': value}) as Map<String, dynamic>;
+    store.autoAssignCleaning = settings['autoAssign'] == true;
+    store.refresh();
   }
 
   /// US-18 / US-24: revenue, bookings and occupancy of the month.

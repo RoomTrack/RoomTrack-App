@@ -250,5 +250,110 @@ void main() {
     // The history loaded with the incident survives the list sync.
     expect(remote.store.incidentById(40).events, isNotEmpty);
   });
+
+  Map<String, Object?> cleaningTask({int id = 60, int roomId = 11, String status = 'Pending', int? assignee, List<Object?>? history}) => {
+        'id': id, 'hotelId': 1, 'roomId': roomId, 'priority': 'High', 'status': status, 'notes': 'Llega un huésped a las 15:00',
+        'createdByUserId': null, 'createdAt': '2026-10-25T12:00:00+00:00', 'assigneeUserId': assignee, 'assignedAt': null,
+        'assignedAutomatically': false, 'startedAt': status == 'Pending' ? null : '2026-10-25T12:10:00+00:00',
+        'completedAt': status == 'Completed' ? '2026-10-25T12:40:00+00:00' : null, 'completedByUserId': null,
+        'cancelledAt': null, 'cancellationReason': null, 'impedimentIncidentIds': const [], 'history': history,
+      };
+
+  const housekeeper = {'id': 3, 'email': 'limpieza@roomtrack.pe', 'firstName': 'María', 'lastName': 'Quispe', 'role': 'housekeeping', 'hotelId': 1};
+
+  test('sin el módulo de limpieza en el backend las tareas siguen en el dispositivo', () async {
+    final remote = fakeBackend(me: housekeeper, signIn: {'id': 3, 'token': 'access'});
+    await remote.signIn('limpieza@roomtrack.pe', 'x');
+    final local = remote.store.createCleaningTask(11);
+    await remote.sync();
+
+    expect(remote.hasCleaningTasks, isFalse);
+    expect(remote.store.cleaningBackend, isNull);
+    expect(remote.store.tasks, contains(local));
+  });
+
+  test('con el módulo de limpieza las tareas vienen del backend y el checklist queda en el dispositivo', () async {
+    final calls = <String>[];
+    var listed = <Object?>[cleaningTask(), cleaningTask(id: 61, roomId: 10, status: 'Cancelled')];
+    Object? answer(Map<String, Object?> data) {
+      listed = [{...data, 'history': null}];
+      return data;
+    }
+    final remote = fakeBackend(
+      me: housekeeper,
+      signIn: {'id': 3, 'token': 'access'},
+      extra: {
+        'GET /cleaning-tasks': () => listed,
+        'POST /cleaning-tasks/60/start': () => answer(cleaningTask(status: 'InProgress', assignee: 3, history: [
+              {'action': 'Created', 'status': 'Pending', 'detail': 'Priority High, the room went to Cleaning', 'incidentId': null,
+                'actorUserId': null, 'actorEmail': null, 'occurredAt': '2026-10-25T12:00:00+00:00'},
+              {'action': 'Assigned', 'status': 'Pending', 'detail': 'Assigned to user 3', 'incidentId': null, 'actorUserId': 3,
+                'actorEmail': 'limpieza@roomtrack.pe', 'occurredAt': '2026-10-25T12:09:00+00:00'},
+              {'action': 'Started', 'status': 'InProgress', 'detail': null, 'incidentId': null, 'actorUserId': 3,
+                'actorEmail': 'limpieza@roomtrack.pe', 'occurredAt': '2026-10-25T12:10:00+00:00'},
+            ])),
+        'POST /cleaning-tasks/60/impediments': () => answer(cleaningTask(status: 'InProgress', assignee: 3)),
+        'POST /cleaning-tasks/60/complete': () => answer(cleaningTask(status: 'Completed', assignee: 3)),
+      },
+      calls: calls,
+    );
+    await remote.signIn('limpieza@roomtrack.pe', 'x');
+    final store = remote.store;
+
+    expect(remote.hasCleaningTasks, isTrue);
+    // Cancelled tasks are left out; the checklist is the one of the room type.
+    expect(store.tasks.map((t) => t.id), [60]);
+    final task = store.taskById(60);
+    expect(task.priority, Priority.high);
+    expect(task.notes, 'Llega un huésped a las 15:00');
+    expect(task.checklist, isNotEmpty);
+
+    // A housekeeper takes the unassigned task by starting it; the room is "en limpieza" for everyone.
+    await remote.startCleaningTask(60);
+    expect(store.taskById(60).status, TaskStatus.inProgress);
+    expect(store.taskById(60).events.map((e) => e.text), [
+      'Tarea creada al pasar la habitación a limpieza · prioridad alta',
+      'Asignada a María Quispe · limpieza@roomtrack.pe',
+      'Limpieza iniciada · limpieza@roomtrack.pe',
+    ]);
+    expect(store.rooms.firstWhere((r) => r.id == 11).status, RoomStatus.cleaning);
+
+    // The checklist stays on this device across syncs and must be done before completing.
+    store.toggleChecklistItem(60, 0, true);
+    await remote.sync();
+    expect(store.taskById(60).checklist.first.done, isTrue);
+    await expectLater(remote.completeCleaningTask(60), throwsA(isA<DomainException>()));
+    expect(calls, isNot(contains('POST /cleaning-tasks/60/complete')));
+
+    await remote.reportImpediment(60, description: ' Espejo roto ', urgency: Priority.urgent);
+    expect(jsonDecode(calls.firstWhere((c) => c.startsWith('POST /cleaning-tasks/60/impediments ')).substring(36)), {
+      'title': 'Desperfecto detectado en limpieza', 'description': 'Espejo roto', 'priority': 'Critical', 'blocksRoom': true,
+    });
+
+    for (final item in store.taskById(60).checklist.where((i) => i.required)) {
+      item.done = true;
+    }
+    await remote.completeCleaningTask(60);
+    expect(store.taskById(60).status, TaskStatus.done);
+  });
+
+  test('crear una tarea sin responsable deja que el backend la asigne por carga', () async {
+    final calls = <String>[];
+    final remote = fakeBackend(
+      me: {'id': 2, 'email': 'recepcion@roomtrack.pe', 'firstName': 'Rosa', 'lastName': 'Díaz', 'role': 'reception', 'hotelId': 1},
+      signIn: {'id': 2, 'token': 'access'},
+      extra: {
+        'GET /cleaning-tasks': const [],
+        'GET /cleaning-tasks/settings': {'hotelId': 1, 'autoAssign': true, 'updatedAt': null, 'updatedByUserId': null},
+        'POST /cleaning-tasks': cleaningTask(roomId: 10, assignee: 3),
+      },
+      calls: calls,
+    );
+    await remote.signIn('recepcion@roomtrack.pe', 'x');
+    expect(remote.store.autoAssignCleaning, isTrue);
+
+    await remote.createCleaningTask(10, priority: Priority.urgent);
+    expect(calls, contains('POST /cleaning-tasks {"roomId":10,"priority":"Urgent"}'));
+  });
 }
 

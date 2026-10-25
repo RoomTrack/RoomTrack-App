@@ -7,20 +7,43 @@ import '../../shared/ui.dart';
 import '../messages/chat_view.dart';
 
 /// Checklist per room type, status updates and comments on the task (US-06, US-07, US-12).
-class TaskDetailPage extends StatelessWidget {
+class TaskDetailPage extends StatefulWidget {
   final int taskId;
 
   const TaskDetailPage({super.key, required this.taskId});
+
+  @override
+  State<TaskDetailPage> createState() => _TaskDetailPageState();
+}
+
+class _TaskDetailPageState extends State<TaskDetailPage> {
+  @override
+  void initState() {
+    super.initState();
+    // The list does not bring the history: it is loaded with the task.
+    HotelStore.instance.cleaningBackend?.refreshCleaningTask(widget.taskId).catchError((_) {});
+  }
 
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 2,
       child: StoreBuilder(builder: (context, store) {
-        final task = store.taskById(taskId);
+        // A completed or cancelled task can leave the store on the next sync.
+        final task = store.tasks.where((t) => t.id == widget.taskId).firstOrNull;
+        if (task == null) {
+          return Scaffold(
+            appBar: AppBar(),
+            body: const Center(child: Text('Esta tarea ya no está disponible.', style: TextStyle(color: kMuted))),
+          );
+        }
         final room = store.roomById(task.roomId);
         final user = store.currentUser!;
-        final isAssignee = task.assigneeId == user.id;
+        final cloud = store.cleaningBackend;
+        // The backend also lets an administrator work on any task.
+        final canWork = task.assigneeId == user.id || (cloud != null && user.role == UserRole.admin && task.assigneeId != null);
+        // ...and a housekeeper takes an unassigned task by starting it.
+        final canTake = cloud != null && user.role == UserRole.housekeeping && task.assigneeId == null && task.status == TaskStatus.pending;
         return Scaffold(
           appBar: AppBar(
             title: Text('Habitación ${room.number}', style: const TextStyle(fontWeight: FontWeight.w900)),
@@ -53,13 +76,14 @@ class TaskDetailPage extends StatelessWidget {
                         ),
                         InfoRow(Icons.person_outline, 'Responsable: ${store.userName(task.assigneeId)}'),
                         InfoRow(Icons.flag_outlined, 'Estado: ${task.status.label}'),
+                        if (task.notes.isNotEmpty) InfoRow(Icons.sticky_note_2_outlined, 'Indicaciones: ${task.notes}'),
                       ],
                     ),
                   ),
                   for (var i = 0; i < task.checklist.length; i++)
                     CheckboxListTile(
                       value: task.checklist[i].done,
-                      onChanged: !task.isOpen || !isAssignee || task.status == TaskStatus.pending
+                      onChanged: !task.isOpen || !canWork || task.status == TaskStatus.pending
                           ? null
                           : (value) => store.toggleChecklistItem(task.id, i, value ?? false),
                       title: Text(task.checklist[i].label),
@@ -71,21 +95,33 @@ class TaskDetailPage extends StatelessWidget {
                       controlAffinity: ListTileControlAffinity.leading,
                     ),
                   const SizedBox(height: 12),
-                  if (task.isOpen && isAssignee) ...[
+                  if (canTake)
+                    AppButton(
+                      text: 'Tomar e iniciar limpieza',
+                      icon: Icons.play_arrow,
+                      onPressed: () => runAsync(context, () => cloud.startCleaningTask(task.id),
+                          success: 'Tarea tomada: la habitación está en limpieza para todo el hotel.'),
+                    ),
+                  if (task.isOpen && canWork) ...[
                     if (task.status == TaskStatus.pending)
                       AppButton(
                         text: 'Iniciar limpieza',
                         icon: Icons.play_arrow,
-                        onPressed: () => store.startTask(task.id),
+                        onPressed: () => cloud == null
+                            ? store.startTask(task.id)
+                            : runAsync(context, () => cloud.startCleaningTask(task.id), success: 'Habitación en limpieza.'),
                       )
                     else
                       AppButton(
                         text: 'Marcar como limpia',
                         icon: Icons.check_circle_outline,
                         dark: true,
-                        onPressed: () {
-                          final ok = runAction(context, () => store.completeTask(task.id), success: 'Habitación lista para recepción.');
-                          if (ok) Navigator.pop(context);
+                        onPressed: () async {
+                          const success = 'Habitación lista para recepción.';
+                          final ok = cloud == null
+                              ? runAction(context, () => store.completeTask(task.id), success: success)
+                              : await runAsync(context, () => cloud.completeCleaningTask(task.id), success: success);
+                          if (ok && context.mounted) Navigator.pop(context);
                         },
                       ),
                     const SizedBox(height: 10),
@@ -96,7 +132,7 @@ class TaskDetailPage extends StatelessWidget {
                       onPressed: () => _reportImpediment(context, store, task),
                     ),
                   ],
-                  if (task.isOpen && !isAssignee)
+                  if (task.isOpen && !canWork && !canTake)
                     const InfoRow(Icons.info_outline, 'Solo la persona responsable puede actualizar esta tarea.'),
                 ],
               ),

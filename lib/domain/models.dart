@@ -266,6 +266,9 @@ class CleaningTask {
   DateTime? completedAt;
   final List<TimelineEvent> events = [];
 
+  /// Instructions for housekeeping (from the backend).
+  String notes = '';
+
   CleaningTask({
     required this.id,
     required this.roomId,

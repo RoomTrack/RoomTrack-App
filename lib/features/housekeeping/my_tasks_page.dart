@@ -22,7 +22,12 @@ class _MyTasksPageState extends State<MyTasksPage> {
   Widget build(BuildContext context) {
     return StoreBuilder(builder: (context, store) {
       final user = store.currentUser!;
-      final tasks = store.tasksFor(user.id, onlyCritical: _onlyCritical);
+      // With the backend, unassigned tasks (automatic assignment off) are listed too, to be taken.
+      final tasks = store.cleaningBackend == null
+          ? store.tasksFor(user.id, onlyCritical: _onlyCritical)
+          : store.openTasks
+              .where((t) => (t.assigneeId == user.id || t.assigneeId == null) && (!_onlyCritical || t.priority.isCritical))
+              .toList();
       return ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [

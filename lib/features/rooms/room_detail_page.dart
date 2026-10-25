@@ -74,7 +74,9 @@ class RoomDetailPage extends StatelessWidget {
                   text: 'Crear tarea de limpieza',
                   icon: Icons.cleaning_services_outlined,
                   outlined: true,
-                  onPressed: () => runAction(context, () => store.createCleaningTask(room.id), success: 'Tarea creada y asignada.'),
+                  onPressed: () => store.cleaningBackend == null
+                      ? runAction(context, () => store.createCleaningTask(room.id), success: 'Tarea creada y asignada.')
+                      : runAsync(context, () => store.cleaningBackend!.createCleaningTask(room.id), success: 'Tarea de limpieza creada.'),
                 ),
             ],
             const SizedBox(height: 10),

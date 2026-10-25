@@ -307,6 +307,9 @@ class Incident {
   bool recurring;
   final List<TimelineEvent> events = [];
 
+  /// E-mail of the reporter as the backend recorded it (other staff are not in the store of every role).
+  String? reportedByEmail;
+
   Incident({
     required this.id,
     required this.roomId,

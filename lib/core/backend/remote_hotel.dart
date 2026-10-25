@@ -260,6 +260,9 @@ class RemoteHotel {
 
   bool get _isAdmin => store.currentUser?.role == UserRole.admin;
 
+  /// Every hotel staff member sees the incidents of their hotel (a chain admin would have to pick one).
+  bool get _seesIncidents => (store.currentUser?.role.isStaff ?? false) && hotelId != null;
+
   bool get _seesPayments {
     final role = store.currentUser?.role;
     return role == UserRole.admin || role == UserRole.reception || role == UserRole.guest;
@@ -295,6 +298,20 @@ class RemoteHotel {
     store.stays
       ..clear()
       ..addAll(stays);
+
+    // US-08 / US-09: the backend has the incidents of the hotel; preventive work still lives on this device.
+    if (_seesIncidents) {
+      try {
+        final incidents = (await api.get('/incidents?limit=500') as List).cast<Map<String, dynamic>>();
+        final previous = {for (final i in store.incidents) i.id: i};
+        store.incidents
+          ..removeWhere((i) => !i.preventive)
+          ..addAll(incidents.map((data) => _incident(data, previous[data['id']])));
+      } on ApiException catch (e) {
+        // A backend without the incidents module (an older local one) keeps them on this device.
+        if (e.statusCode != 404) rethrow;
+      }
+    }
 
     if (_seesPayments) {
       store.payments.clear();
@@ -453,6 +470,91 @@ class RemoteHotel {
         createdAt: DateTime.tryParse('${data['paymentDate']}Z'.replaceFirst(' ', 'T'))?.toLocal() ?? DateTime.now(),
       );
 
+  static Priority incidentPriority(String value) => switch (value) {
+        'Low' => Priority.low,
+        'High' => Priority.high,
+        'Critical' => Priority.urgent,
+        _ => Priority.normal, // Medium
+      };
+
+  static String backendIncidentPriority(Priority priority) => switch (priority) {
+        Priority.low => 'Low',
+        Priority.normal => 'Medium',
+        Priority.high => 'High',
+        Priority.urgent => 'Critical',
+      };
+
+  /// The backend has no categories: its incidents show none. The history only comes with a single incident; the
+  /// list keeps the one already loaded.
+  Incident _incident(Map<String, dynamic> data, [Incident? previous]) {
+    final incident = Incident(
+      id: data['id'] as int,
+      roomId: data['roomId'] as int,
+      title: data['title']?.toString() ?? '',
+      description: data['description']?.toString() ?? '',
+      category: '',
+      urgency: incidentPriority(data['priority']?.toString() ?? ''),
+      reportedById: data['reportedByUserId'] as int,
+      createdAt: DateTime.parse(data['reportedAt'].toString()).toLocal(),
+      status: switch (data['status']) {
+        'InProgress' => WorkStatus.inProgress,
+        'Resolved' => WorkStatus.resolved,
+        _ => WorkStatus.pending,
+      },
+      assigneeId: data['assigneeUserId'] as int?,
+      blocksRoom: data['blocksRoom'] == true,
+      escalated: data['escalatedAt'] != null,
+      resolutionNotes: data['resolutionNotes']?.toString() ?? '',
+    )
+      ..resolvedAt = DateTime.tryParse(data['resolvedAt']?.toString() ?? '')?.toLocal()
+      ..reportedByEmail = data['reportedByEmail']?.toString();
+    final history = data['history'];
+    if (history is List) {
+      incident.events.addAll([
+        for (final entry in history.cast<Map<String, dynamic>>())
+          TimelineEvent(DateTime.parse(entry['occurredAt'].toString()).toLocal(), _incidentEventText(entry)),
+      ]);
+    } else if (previous != null) {
+      incident.events.addAll(previous.events);
+    }
+    return incident;
+  }
+
+  /// The backend's `detail` is in English: the text is rebuilt in Spanish from the action.
+  String _incidentEventText(Map<String, dynamic> entry) {
+    final by = entry['actorEmail'] == null ? '' : ' · ${entry['actorEmail']}';
+    final detail = entry['detail']?.toString() ?? '';
+    switch (entry['action']) {
+      case 'Reported':
+        return 'Reportada$by';
+      case 'Assigned':
+        final assignee = int.tryParse(RegExp(r'\d+$').firstMatch(detail)?.group(0) ?? '');
+        final name = store.userById(assignee)?.name;
+        return '${name == null ? 'Asignada' : 'Asignada a $name'}$by';
+      case 'Started':
+        return 'En proceso$by';
+      case 'PriorityChanged':
+        final parts = detail.split('→').map((p) => incidentPriority(p.trim()).label).toList();
+        return '${parts.length == 2 ? 'Prioridad: ${parts[0]} → ${parts[1]}' : 'Prioridad cambiada'}$by';
+      case 'Escalated':
+        return 'Escalada al administrador por demora';
+      case 'Resolved':
+        return 'Resuelta${detail.isEmpty ? '' : ': $detail'}$by';
+      default:
+        return '${entry['action']}$by';
+    }
+  }
+
+  /// Puts the incident the backend answered (with its history) in the store.
+  void _upsertIncident(Map<String, dynamic> data) {
+    final previous = store.incidents.where((i) => i.id == data['id']).firstOrNull;
+    final incident = _incident(data, previous);
+    store.incidents
+      ..remove(previous)
+      ..add(incident);
+    store.refresh();
+  }
+
   static String _methodLabel(String value) =>
       kPaymentMethods.where((m) => m.value == value).firstOrNull?.label ?? value;
 
@@ -580,6 +682,70 @@ class RemoteHotel {
   /// Only Pending or Confirmed bookings, before the check-in day. A paid booking gets its payment refunded.
   Future<void> cancelBooking(int bookingId) async {
     await api.post('/bookings/$bookingId/cancel');
+    await sync();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Incidents (US-08 / US-09)
+  // ---------------------------------------------------------------------------
+
+  /// US-08: maintenance is notified by the backend; with [blocksRoom] the room goes to Maintenance.
+  Future<void> reportIncident({required int roomId, required String title, required String description,
+      required Priority urgency, required bool blocksRoom}) async {
+    if (title.trim().isEmpty) throw const DomainException('Describe brevemente la incidencia.');
+    final data = await api.post('/incidents', {
+      'roomId': roomId,
+      'title': title.trim(),
+      if (description.trim().isNotEmpty) 'description': description.trim(),
+      'priority': backendIncidentPriority(urgency),
+      'blocksRoom': blocksRoom,
+    }) as Map<String, dynamic>;
+    _upsertIncident(data);
+    // The room may have gone to Maintenance.
+    await sync();
+  }
+
+  /// US-06: damage found while cleaning goes to maintenance as an incident; the task keeps a note of it.
+  Future<void> reportImpediment(int taskId, {required String description, required Priority urgency}) async {
+    if (description.trim().isEmpty) throw const DomainException('Describe el desperfecto que encontraste.');
+    final task = store.taskById(taskId);
+    await reportIncident(
+      roomId: task.roomId,
+      title: 'Desperfecto detectado en limpieza',
+      description: description,
+      urgency: urgency,
+      blocksRoom: true,
+    );
+    task.events.add(TimelineEvent(store.now, 'Impedimento reportado: ${description.trim()}'));
+    store.refresh();
+  }
+
+  /// The incident with its history.
+  Future<void> refreshIncident(int incidentId) async =>
+      _upsertIncident(await api.get('/incidents/$incidentId') as Map<String, dynamic>);
+
+  /// Pending → InProgress. A maintenance staff member starting an unassigned incident takes it.
+  Future<void> startIncident(int incidentId) => _incidentAction(() => api.post('/incidents/$incidentId/start'));
+
+  /// When it blocked its room and nothing else does, the backend sends the room to Cleaning: housekeeping (still on
+  /// this device) gets the task.
+  Future<void> resolveIncident(int incidentId, String notes) async {
+    if (notes.trim().isEmpty) throw const DomainException('Agrega observaciones sobre la solución.');
+    await _incidentAction(() => api.post('/incidents/$incidentId/resolve', {'resolutionNotes': notes.trim()}));
+    final room = store.roomById(store.incidentById(incidentId).roomId);
+    if (room.status == RoomStatus.dirty) store.createCleaningTask(room.id, priority: Priority.high);
+  }
+
+  /// Only an administrator assigns to someone else; maintenance takes an incident with [startIncident].
+  Future<void> assignIncident(int incidentId, int userId) =>
+      _incidentAction(() => api.post('/incidents/$incidentId/assign', {'assigneeUserId': userId}));
+
+  Future<void> changeIncidentPriority(int incidentId, Priority urgency) => _incidentAction(
+      () => api.put('/incidents/$incidentId/priority', {'priority': backendIncidentPriority(urgency)}));
+
+  Future<void> _incidentAction(Future<dynamic> Function() call) async {
+    _upsertIncident(await call() as Map<String, dynamic>);
+    // The room may have changed too (Maintenance → Cleaning).
     await sync();
   }
 

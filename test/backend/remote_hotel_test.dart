@@ -8,7 +8,8 @@ import 'package:roomtrack/core/backend/remote_hotel.dart';
 import 'package:roomtrack/core/hotel_store.dart';
 import 'package:roomtrack/domain/models.dart';
 
-/// A fake gateway answering the routes the app uses, with the shapes of the real backend.
+/// A fake gateway answering the routes the app uses, with the shapes of the real backend. A route can map to a
+/// function to answer with what earlier calls changed.
 RemoteHotel fakeBackend({required Map<String, Object?> me, Map<String, Object?> signIn = const {},
     Map<String, Object?> extra = const {}, List<String>? calls}) {
   final routes = <String, Object?>{
@@ -50,7 +51,9 @@ RemoteHotel fakeBackend({required Map<String, Object?> me, Map<String, Object?> 
     final key = '${request.method} $path';
     calls?.add(request.body.isEmpty ? key : '$key ${request.body}');
     if (!routes.containsKey(key)) return http.Response(jsonEncode({'title': 'Not found', 'status': 404}), 404);
-    return http.Response(jsonEncode(routes[key]), 200, headers: {'content-type': 'application/json; charset=utf-8'});
+    // A function answers with the current state of the fake backend.
+    final body = switch (routes[key]) { final Object? Function() answer => answer(), final value => value };
+    return http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json; charset=utf-8'});
   });
   final store = HotelStore(seed: false);
   final remote = RemoteHotel(store, ApiClient(client: client));
@@ -169,4 +172,83 @@ void main() {
     expect(error.message,
         'Indica a nombre de quién se paga.\nEl número de Yape debe ser un celular de 9 dígitos que empiece con 9.');
   });
+
+  Map<String, Object?> incident({int id = 40, String status = 'Pending', int? assignee, List<Object?>? history}) => {
+        'id': id, 'hotelId': 1, 'roomId': 10, 'title': 'Ducha sin agua caliente', 'description': null, 'priority': 'Critical',
+        'status': status, 'blocksRoom': true, 'reportedByUserId': 2, 'reportedByEmail': 'recepcion@roomtrack.pe',
+        'reportedAt': '2026-10-25T13:00:00+00:00', 'assigneeUserId': assignee, 'assignedAt': null, 'startedAt': null,
+        'resolvedAt': status == 'Resolved' ? '2026-10-25T15:00:00+00:00' : null, 'resolvedByUserId': null,
+        'resolutionNotes': status == 'Resolved' ? 'Se cambió la resistencia.' : null, 'escalatedAt': null, 'history': history,
+      };
+
+  test('el personal sincroniza las incidencias del hotel y conserva el preventivo local', () async {
+    final remote = fakeBackend(
+      me: {'id': 4, 'email': 'mantenimiento@roomtrack.pe', 'firstName': 'Luis', 'lastName': 'Paredes', 'role': 'maintenance', 'hotelId': 1},
+      signIn: {'id': 4, 'token': 'access'},
+      extra: {'GET /incidents': [incident(), incident(id: 41, status: 'Resolved', assignee: 4)]},
+    );
+    remote.store.incidents.add(Incident(id: 1000001, roomId: 10, title: 'Preventivo: aire', description: '', category: 'Preventivo',
+        urgency: Priority.normal, reportedById: 1, createdAt: DateTime(2026, 10, 1), preventive: true, blocksRoom: false));
+    await remote.signIn('mantenimiento@roomtrack.pe', 'x');
+    final store = remote.store;
+
+    expect(store.incidents.map((i) => i.id), containsAll([40, 41, 1000001]));
+    final open = store.incidentById(40);
+    expect(open.urgency, Priority.urgent);
+    expect(open.status, WorkStatus.pending);
+    expect(open.assigneeId, isNull);
+    expect(open.reportedByEmail, 'recepcion@roomtrack.pe');
+    expect(store.incidentById(41).resolvedAt, isNotNull);
+    expect(store.hasBlockingIncident(10), isTrue);
+  });
+
+  test('reportar, tomar y resolver una incidencia van al backend con su historial en español', () async {
+    final calls = <String>[];
+    // What the backend lists (without history) after each call.
+    var listed = <Object?>[];
+    Object? answer(Map<String, Object?> data) {
+      listed = [{...data, 'history': null}];
+      return data;
+    }
+    final remote = fakeBackend(
+      me: {'id': 4, 'email': 'mantenimiento@roomtrack.pe', 'firstName': 'Luis', 'lastName': 'Paredes', 'role': 'maintenance', 'hotelId': 1},
+      signIn: {'id': 4, 'token': 'access'},
+      extra: {
+        'GET /incidents': () => listed,
+        'POST /incidents': () => answer(incident()),
+        'POST /incidents/40/start': () => answer(incident(status: 'InProgress', assignee: 4, history: [
+          {'action': 'Reported', 'status': 'Pending', 'detail': 'Priority Critical, blocks the room', 'actorUserId': 2,
+            'actorEmail': 'recepcion@roomtrack.pe', 'occurredAt': '2026-10-25T13:00:00+00:00'},
+          {'action': 'Assigned', 'status': 'Pending', 'detail': 'Assigned to user 4', 'actorUserId': 4,
+            'actorEmail': 'mantenimiento@roomtrack.pe', 'occurredAt': '2026-10-25T13:05:00+00:00'},
+          {'action': 'PriorityChanged', 'status': 'Pending', 'detail': 'Critical → High', 'actorUserId': 4,
+            'actorEmail': 'mantenimiento@roomtrack.pe', 'occurredAt': '2026-10-25T13:06:00+00:00'},
+        ])),
+        'POST /incidents/40/resolve': () => answer(incident(status: 'Resolved', assignee: 4)),
+      },
+      calls: calls,
+    );
+    await remote.signIn('mantenimiento@roomtrack.pe', 'x');
+
+    await remote.reportIncident(roomId: 10, title: ' Ducha sin agua caliente ', description: '', urgency: Priority.urgent, blocksRoom: true);
+    final report = jsonDecode(calls.firstWhere((c) => c.startsWith('POST /incidents ')).substring('POST /incidents '.length));
+    expect(report, {'roomId': 10, 'title': 'Ducha sin agua caliente', 'priority': 'Critical', 'blocksRoom': true});
+
+    await remote.startIncident(40);
+    final started = remote.store.incidentById(40);
+    expect(started.status, WorkStatus.inProgress);
+    expect(started.events.map((e) => e.text), [
+      'Reportada · recepcion@roomtrack.pe',
+      'Asignada a Luis Paredes · mantenimiento@roomtrack.pe',
+      'Prioridad: Urgente → Alta · mantenimiento@roomtrack.pe',
+    ]);
+
+    await expectLater(remote.resolveIncident(40, '  '), throwsA(isA<DomainException>()));
+    await remote.resolveIncident(40, 'Se cambió la resistencia.');
+    expect(calls, contains('POST /incidents/40/resolve {"resolutionNotes":"Se cambió la resistencia."}'));
+    expect(remote.store.incidentById(40).isOpen, isFalse);
+    // The history loaded with the incident survives the list sync.
+    expect(remote.store.incidentById(40).events, isNotEmpty);
+  });
 }
+

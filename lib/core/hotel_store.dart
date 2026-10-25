@@ -1250,7 +1250,8 @@ class HotelStore extends ChangeNotifier {
 
   /// Time-based rules: escalations, delays, preventive work and scheduled reports.
   void runChecks() {
-    for (final incident in incidents.where((i) => i.isOpen && i.urgency == Priority.urgent && !i.escalated)) {
+    // The backend escalates its own incidents (scheduled job); only on-device ones are checked here.
+    for (final incident in incidents.where((i) => i.isOpen && i.urgency == Priority.urgent && !i.escalated && (remote == null || i.preventive))) {
       if (now.difference(incident.createdAt) >= criticalIncidentLimit) {
         incident.escalated = true;
         incident.events.add(TimelineEvent(now, 'Escalada al administrador por demora'));

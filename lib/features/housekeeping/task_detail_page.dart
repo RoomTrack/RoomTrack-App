@@ -157,10 +157,16 @@ class TaskDetailPage extends StatelessWidget {
       ),
     );
     if (confirmed != true || !context.mounted) return;
+    const success = 'Incidencia creada y enviada a mantenimiento.';
+    final remote = store.remote;
+    if (remote != null) {
+      await runAsync(context, () => remote.reportImpediment(task.id, description: controller.text, urgency: urgency), success: success);
+      return;
+    }
     runAction(
       context,
       () => store.reportImpediment(task.id, description: controller.text, urgency: urgency, reporterId: store.currentUser!.id),
-      success: 'Incidencia creada y enviada a mantenimiento.',
+      success: success,
     );
   }
 }

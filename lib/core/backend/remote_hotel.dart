@@ -320,6 +320,7 @@ class RemoteHotel {
     store.rooms
       ..clear()
       ..addAll(visibleRooms);
+    if ((store.currentUser?.role.isStaff ?? false) && hotelId != null) await _applyRoomMap();
 
     for (final data in users.where((u) => hotelId == null || u['hotelId'] == hotelId || u['hotelId'] == null)) {
       _upsertUser(_user(data));
@@ -564,7 +565,34 @@ class RemoteHotel {
       floor: digits.length >= 3 ? int.parse(digits.substring(0, digits.length - 2)) : 1,
       type: _roomType(data['roomTypeName']?.toString() ?? ''),
       status: _roomStatus(data['status']?.toString() ?? 'Available'),
-    );
+    )
+      ..roomTypeId = data['roomTypeId'] as int?
+      ..typeName = data['roomTypeName']?.toString() ?? ''
+      ..price = (data['price'] as num?)?.toDouble()
+      ..description = data['description']?.toString() ?? ''
+      ..amenities = [for (final a in (data['amenities'] as List? ?? const [])) a.toString()];
+  }
+
+  /// US-04: the room map of the hotel says which statuses each room can go to and which have been in maintenance too
+  /// long. A backend without it leaves every status open.
+  Future<void> _applyRoomMap() async {
+    try {
+      final map = await api.get('/rooms/map?hotelId=$hotelId') as Map<String, dynamic>;
+      final items = {for (final item in (map['rooms'] as List? ?? const []).cast<Map<String, dynamic>>()) item['id']: item};
+      for (final room in store.rooms) {
+        final item = items[room.id];
+        if (item == null) continue;
+        room
+          ..allowedNext = {
+            for (final status in (item['allowedNextStatuses'] as List? ?? const [])) _roomStatus(status.toString()),
+            // Housekeeping's "en limpieza" is the backend's Cleaning too.
+            if ((item['allowedNextStatuses'] as List? ?? const []).contains('Cleaning')) RoomStatus.cleaning,
+          }
+          ..maintenanceOverdue = item['maintenanceOverdue'] == true;
+      }
+    } on ApiException catch (e) {
+      if (e.statusCode != 404) rethrow;
+    }
   }
 
   Stay _stay(Map<String, dynamic> data, Stay? previous) {
@@ -1026,6 +1054,10 @@ class RemoteHotel {
 
   Future<void> routeRequest(int requestId, Area area) =>
       _requestAction(() => api.post('/guest-requests/$requestId/route', {'area': backendArea(area)}));
+
+  /// The front desk puts someone of the request's area in charge; a member of the area takes it for themselves.
+  Future<void> assignRequest(int requestId, int userId) =>
+      _requestAction(() => api.post('/guest-requests/$requestId/assign', {'assigneeUserId': userId}));
 
   Future<void> startRequest(int requestId) => _requestAction(() => api.post('/guest-requests/$requestId/start'));
 

@@ -7,8 +7,10 @@ import '../../shared/ui.dart';
 import '../payments/folio_card.dart';
 import '../payments/folio_sheets.dart';
 import '../payments/payment_sheet.dart';
+import '../profiles/guest_profile_sheet.dart';
 import 'check_in_sheet.dart';
 import 'register_payment_sheet.dart';
+import 'remote_booking_sheets.dart';
 
 /// Reception's view of a stay: folio, collection and assisted check-out (US-16, US-17, US-27).
 class StayDetailPage extends StatefulWidget {
@@ -161,8 +163,17 @@ class _StayDetailPageState extends State<StayDetailPage> {
     return [
       if (stay.awaitingPayment)
         AppButton(text: 'Registrar pago', icon: Icons.point_of_sale, dark: true, onPressed: () => showRegisterPaymentSheet(context, stay)),
-      if (stay.status == StayStatus.reserved && !stay.awaitingPayment)
-        const InfoRow(Icons.phone_iphone, 'Reserva pagada: el huésped completa su check-in digital desde la app.', color: kSuccess),
+      if (stay.status == StayStatus.reserved && !stay.awaitingPayment) ...[
+        const InfoRow(Icons.phone_iphone, 'Reserva pagada: el huésped puede hacer su check-in digital desde la app.', color: kSuccess),
+        const SizedBox(height: 10),
+        AppButton(text: 'Check-in en recepción', icon: Icons.key_outlined, dark: true, onPressed: () => showAssistedCheckInSheet(context, stay)),
+      ],
+      if (stay.status == StayStatus.reserved) ...[
+        const SizedBox(height: 10),
+        AppButton(text: 'Cambiar fechas o habitación', icon: Icons.edit_calendar_outlined, outlined: true, onPressed: () => showRescheduleSheet(context, stay)),
+      ],
+      const SizedBox(height: 10),
+      AppButton(text: 'Ficha del huésped', icon: Icons.badge_outlined, outlined: true, onPressed: () => showGuestProfileSheet(context, stay)),
       // US-15: the guarantee deposit is held at check-in.
       if (folios && stay.depositHeld == 0 && !stay.awaitingPayment && (stay.status == StayStatus.reserved || stay.status == StayStatus.checkedIn)) ...[
         const SizedBox(height: 10),

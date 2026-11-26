@@ -266,18 +266,26 @@ flutter test test/backend/remote_hotel_live_test.dart --dart-define=API_BASE_URL
 
 | Ya usa el backend | Todavía solo en la app |
 |---|---|
-| Login, MFA, verificación de correo, recuperación y cambio de contraseña | Configuración del checklist por tipo de habitación (el backend ya la tiene) |
-| Habitaciones, cambio de estado e historial | Catálogo de servicios (la solicitud sí va al backend) |
-| Alta, rol y desactivación del personal | Extensión de estadía |
-| Reservas, registro de pagos y cancelación | Evaluación de la estancia y analítica detallada |
-| Check-in digital con foto del documento y código de acceso | Reportes programados |
-| Tareas de limpieza con su checklist por tipo de habitación (US-05 a US-07) | Notificaciones push en el dispositivo (falta Firebase en la app) |
-| Incidencias, recurrencias, mantenimiento preventivo y alertas (US-08 a US-10, US-23, US-30) | |
-| Solicitudes de huéspedes y su derivación por área (US-11, US-19, US-33) | |
+| Login, MFA, verificación de correo, recuperación y cambio de contraseña | Catálogo de servicios (la solicitud sí va al backend) |
+| Habitaciones, cambio de estado (solo transiciones permitidas), historial y mantenimiento vencido | Extensión de una estadía en curso (el backend solo cambia reservas sin check-in) |
+| Datos del hotel con su foto, tipos de habitación y alta/edición/baja de habitaciones | Evaluación de la estancia y analítica detallada |
+| Alta, rol y desactivación del personal, ficha de RR. HH. y sus asignaciones | Reportes programados |
+| Auditoría de accesos y cambios de las cuentas | Notificaciones push en el dispositivo (falta Firebase en la app) |
+| Reservas, disponibilidad por fechas, cambio de fechas o habitación, pagos y cancelación | |
+| Check-in digital del huésped y check-in en recepción con alternativas si la habitación no está lista | |
+| Ficha del huésped: contacto, documento, corrección y desactivación | |
+| Tareas de limpieza y protocolos (checklists) por tipo de habitación (US-05 a US-07) | |
+| Incidencias, recurrencias, mantenimiento preventivo, resumen por habitación y alertas (US-08 a US-10, US-23, US-30) | |
+| Solicitudes de huéspedes, su derivación y asignación por área (US-11, US-19, US-33) | |
 | Mensajes: canales por área, comentarios en tareas y chat con recepción (US-12, US-20) | |
-| Folio: cargos adicionales, garantía, pago dividido, factura, comprobantes y check-out (US-14 a US-17) | |
-| Turnos, huecos de cobertura, cambios de turno y entrega de turno (US-31, US-32) | |
+| Folio: cargos adicionales, garantía, pago dividido, factura, comprobantes, historial de pagos y check-out (US-14 a US-17) | |
+| Turnos, huecos de cobertura críticos, cambios de turno y entrega de turno (US-31, US-32) | |
+| Climatización de la habitación (termostato IoT emulado) | |
 | Preferencias de notificación (US-22) y métricas del mes | |
+
+No se usan desde la app, a propósito: los trabajos programados del backend (vencimiento de reservas, escalamientos,
+preventivos, alertas de mantenimiento), las solicitudes de demo de la web, el catálogo global y el caché de analítica
+(solo `chain_admin`), la inyección de telemetría del emulador IoT y el registro de dispositivos push.
 
 Cada módulo se detecta en la sincronización: con un backend que aún no lo tiene (responde 404), esa parte sigue
 funcionando en memoria del dispositivo como antes.

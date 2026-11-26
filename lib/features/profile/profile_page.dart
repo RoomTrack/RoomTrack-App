@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../../core/hotel_store.dart';
 import '../../core/session.dart';
 import '../../domain/models.dart';
+import '../../core/backend/remote_extras.dart';
 import '../../shared/ui.dart';
+import '../profiles/guest_profile_sheet.dart';
 
 /// Contact data, password and notification preferences (US-02, US-22).
 class ProfilePage extends StatefulWidget {
@@ -63,7 +65,7 @@ class _ProfilePageState extends State<ProfilePage> {
           if (store.isRemote)
             const Padding(
               padding: EdgeInsets.only(bottom: 8),
-              child: InfoRow(Icons.info_outline, 'El backend aún no permite editar estos datos: se guardan solo en este dispositivo.'),
+              child: InfoRow(Icons.info_outline, 'Nombre y correo vienen de tu cuenta: los cambios aquí se guardan solo en este dispositivo.'),
             ),
           AppButton(
             text: 'Guardar cambios',
@@ -74,6 +76,17 @@ class _ProfilePageState extends State<ProfilePage> {
               success: 'Perfil actualizado.',
             ),
           ),
+          if (store.isRemote && _user.role == UserRole.guest) ...[
+            const SectionHeader(title: 'Mi ficha de huésped', subtitle: 'El hotel la usa para tus reservas y comprobantes.'),
+            AppCard(
+              child: GuestProfileEditor(
+                name: _user.name,
+                email: _user.email,
+                userId: _user.id,
+                load: () => store.remote!.myGuestProfile(),
+              ),
+            ),
+          ],
           const SectionHeader(title: 'Cambiar contraseña'),
           TextField(controller: _current, obscureText: true, decoration: const InputDecoration(labelText: 'Contraseña actual')),
           const SizedBox(height: 10),

@@ -130,6 +130,7 @@ class RequestCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final late = request.status != WorkStatus.resolved && store.now.difference(request.createdAt).inMinutes > request.etaMinutes;
     final cloud = store.remote?.hasGuestRequests == true ? store.remote : null;
+    final me = store.currentUser!;
     return AppCard(
       borderColor: late ? kWarning : null,
       child: Column(
@@ -142,6 +143,7 @@ class RequestCard extends StatelessWidget {
             ],
           ),
           InfoRow(Icons.meeting_room_outlined, 'Hab. ${store.roomById(request.roomId).number} · ${request.area.label}'),
+          if (request.assigneeId != null) InfoRow(Icons.person_outline, 'A cargo de ${store.userName(request.assigneeId)}'),
           InfoRow(
             Icons.schedule,
             '${timeAgo(request.createdAt, store.now)} · estimado ${request.etaMinutes} min${late ? ' · demorada' : ''}',
@@ -164,6 +166,25 @@ class RequestCard extends StatelessWidget {
                       padding: EdgeInsets.all(8),
                       child: Row(children: [Icon(Icons.alt_route, size: 18), SizedBox(width: 4), Text('Derivar')]),
                     ),
+                  ),
+                // The admin knows the staff of each area; someone of the area takes an unassigned request.
+                if (cloud != null && me.role == UserRole.admin && store.staffOf(request.area.role).isNotEmpty)
+                  PopupMenuButton<int>(
+                    tooltip: 'Asignar',
+                    onSelected: (userId) => runAsync(context, () => cloud.assignRequest(request.id, userId),
+                        success: 'Solicitud asignada a ${store.userName(userId)}.'),
+                    itemBuilder: (_) => [
+                      for (final member in store.staffOf(request.area.role)) PopupMenuItem(value: member.id, child: Text(member.name)),
+                    ],
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Row(children: [Icon(Icons.person_add_alt, size: 18), SizedBox(width: 4), Text('Asignar')]),
+                    ),
+                  ),
+                if (cloud != null && request.assigneeId == null && me.role.area == request.area && me.role != UserRole.admin)
+                  TextButton(
+                    onPressed: () => runAsync(context, () => cloud.assignRequest(request.id, me.id), success: 'La solicitud quedó a tu cargo.'),
+                    child: const Text('Tomar'),
                   ),
                 if (canRoute && cloud != null)
                   TextButton(

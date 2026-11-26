@@ -103,6 +103,21 @@ class ApiClient {
     return _decode(response);
   }
 
+  /// Multipart upload to a URL outside the gateway, without the session (a signed Cloudinary upload).
+  Future<Map<String, dynamic>> uploadTo(String url, Map<String, String> fields,
+      {required String fileField, required Uint8List bytes, required String fileName}) async {
+    final response = await _guard(() async {
+      final request = http.MultipartRequest('POST', Uri.parse(url))
+        ..fields.addAll(fields)
+        ..files.add(http.MultipartFile.fromBytes(fileField, bytes, filename: fileName));
+      return http.Response.fromStream(await _client.send(request));
+    });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(response.statusCode, 'No se pudo subir la imagen (${response.statusCode}).');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<dynamic> _send(String method, String path, {Object? body, String? bearer}) async {
     Future<http.Response> send() {
       final request = http.Request(method, _uri(path))..headers.addAll(_headers(bearer: bearer));
@@ -335,6 +350,48 @@ class ApiClient {
     'check_in.document_file_type': 'El documento debe ser JPG, PNG o PDF.',
     'check_in.document_too_large': 'El archivo del documento supera los 5 MB.',
     'check_in.nationality_invalid': 'La nacionalidad debe ser un código de 2 letras (PE, AR, US...).',
+    'booking.change_not_allowed': 'Solo se cambian reservas pendientes o confirmadas.',
+    'booking.change_requires_field': 'Indica la nueva fecha o la nueva habitación.',
+    'booking.paid_total_mismatch': 'La reserva ya está pagada: el cambio debe mantener el mismo total.',
+    'room.has_active_bookings': 'La habitación tiene reservas activas: no se puede eliminar.',
+    'room.not_found': 'Esa habitación ya no existe.',
+    'room.number_invalid': 'El número de habitación debe tener hasta 10 caracteres.',
+    'room.number_taken': 'Ya existe una habitación con ese número en el hotel.',
+    'room.price_out_of_range': 'El precio por noche debe estar entre 0.01 y 100000.',
+    'room_type.not_found': 'Ese tipo de habitación ya no existe.',
+    'hotel.image_url_not_allowed': 'La imagen debe ser una URL https válida.',
+    'hotel.not_found': 'No encontramos el hotel.',
+    'media.uploads_not_configured': 'Este servidor no tiene configurada la subida de imágenes.',
+    'guest_profile.already_linked': 'Esta ficha ya está vinculada a otra cuenta.',
+    'guest_profile.correction_reason_required': 'Indica el motivo de la corrección.',
+    'guest_profile.identification_already_set': 'La ficha ya tiene documento: un administrador puede corregirlo.',
+    'guest_profile.inactive': 'La ficha del huésped está desactivada.',
+    'guest_profile.no_document_to_correct': 'La ficha aún no tiene documento que corregir.',
+    'profile.dni_invalid': 'El DNI debe tener 8 dígitos.',
+    'profile.passport_invalid': 'El pasaporte debe tener de 6 a 12 letras o dígitos.',
+    'profile.foreigner_id_invalid': 'El carné de extranjería debe tener de 8 a 12 letras o dígitos.',
+    'profile.document_number_required': 'Ingresa el número de documento.',
+    'profile.email_invalid': 'El correo no es válido.',
+    'profile.email_required': 'Ingresa el correo.',
+    'profile.first_name_required': 'Ingresa el nombre.',
+    'profile.last_name_required': 'Ingresa el apellido.',
+    'profile.phone_invalid': 'El teléfono no es válido.',
+    'profile.phone_required': 'Ingresa el teléfono.',
+    'profile.date_range_invalid': 'La fecha de fin debe ser posterior a la de inicio.',
+    'staff.inactive': 'La ficha del colaborador está desactivada.',
+    'staff.job_position_required': 'Indica el puesto.',
+    'staff.job_position_length': 'El puesto es demasiado largo.',
+    'staff.shift_invalid': 'Elige un turno habitual válido.',
+    'staff.assignment_duplicated': 'Ya tiene esa asignación.',
+    'staff.assignment_terminated': 'Esa asignación ya terminó.',
+    'staff.assignment_already_terminated': 'Esa asignación ya terminó.',
+    'staff.assignment_not_suspended': 'Solo se reactiva una asignación suspendida.',
+    'staff.assignment_period_expired': 'El periodo de esa asignación ya venció.',
+    'staff.termination_before_start': 'La fecha de término no puede ser anterior al inicio.',
+    'staff.admin_conflicts_with_reception': 'No puede ser administrador y recepción en el mismo hotel.',
+    'staff.reception_conflicts_with_admin': 'No puede ser recepción y administrador en el mismo hotel.',
+    'staff.hotel_not_found': 'No encontramos el hotel de la asignación.',
+    'iot.thermostat_invalid': 'Indica la temperatura y la velocidad del ventilador.',
     'rate_limit.exceeded': 'Demasiados intentos. Espera un momento y vuelve a intentarlo.',
     'service.unavailable': 'Un servicio del backend no responde. Inténtalo en un momento.',
   };

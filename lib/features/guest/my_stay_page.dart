@@ -10,6 +10,7 @@ import '../front_desk/stay_detail_page.dart' show cancelRemoteBooking;
 import '../payments/folio_card.dart';
 import '../payments/folio_sheets.dart';
 import '../payments/payment_sheet.dart';
+import '../rooms/room_climate_card.dart';
 import 'guest_chat_page.dart';
 import 'rating_card.dart';
 
@@ -67,6 +68,7 @@ class MyStayPage extends StatelessWidget {
         const SizedBox(height: 20),
         _MockupButton(text: 'Llave digital', icon: Icons.key_outlined, filled: true, onPressed: () => _showKey(context, store, stay)),
         const SizedBox(height: 12),
+        if (stay.roomId != null) ...[RoomClimateCard(roomId: stay.roomId!), const SizedBox(height: 12)],
         if (folios) ...[
           _MockupButton(
             text: balance > 0 ? 'Pagar ${money(balance)} y hacer check-out' : 'Hacer check-out',

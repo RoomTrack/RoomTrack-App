@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../core/hotel_store.dart';
 import '../../core/permissions.dart';
 import '../../domain/models.dart';
+import '../admin/audit_log_page.dart';
+import '../admin/hotel_setup_page.dart';
 import '../alerts/alerts_page.dart';
 import '../analytics/analytics_page.dart';
 import '../analytics/report_schedules_page.dart';
@@ -62,6 +65,8 @@ final Map<Feature, FeatureInfo> featureInfo = {
   Feature.guestChat: FeatureInfo('Mensajes', Icons.chat_bubble_outline, () => const GuestChatPage(), 'Habla con recepción cuando quieras.'),
   Feature.profile: FeatureInfo('Perfil', Icons.person_outline, () => const ProfilePage(), 'Tus datos y preferencias.'),
   Feature.notifications: FeatureInfo('Notificaciones', Icons.notifications_outlined, () => const NotificationsPage()),
+  Feature.hotelSetup: FeatureInfo('Hotel y habitaciones', Icons.apartment_outlined, () => const HotelSetupPage(), 'Datos del hotel, habitaciones y protocolos de limpieza.'),
+  Feature.auditLog: FeatureInfo('Auditoría', Icons.policy_outlined, () => const AuditLogPage(), 'Accesos y cambios de las cuentas del hotel.'),
 };
 
 /// Bottom navigation per role; whatever else the role can reach lives under "Más".
@@ -75,4 +80,5 @@ const Map<UserRole, List<Feature>> roleTabs = {
 
 List<Feature> moreFeatures(UserRole role) => Feature.values
     .where((f) => canAccess(role, f) && !roleTabs[role]!.contains(f) && f != Feature.notifications)
+    .where((f) => HotelStore.instance.isRemote || !backendOnlyFeatures.contains(f))
     .toList();

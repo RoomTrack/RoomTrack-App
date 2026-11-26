@@ -27,7 +27,12 @@ enum Feature {
   guestChat,
   profile,
   notifications,
+  hotelSetup,
+  auditLog,
 }
+
+/// Screens that only exist with the backend (the demo data has no hotel record nor audit log).
+const Set<Feature> backendOnlyFeatures = {Feature.hotelSetup, Feature.auditLog};
 
 const Set<Feature> _common = {Feature.profile, Feature.notifications};
 
@@ -55,6 +60,8 @@ const Map<UserRole, Set<Feature>> _access = {
     Feature.preventive,
     Feature.alerts,
     Feature.reportSchedules,
+    Feature.hotelSetup,
+    Feature.auditLog,
   },
   UserRole.reception: {
     ..._staffCommon,

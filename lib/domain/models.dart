@@ -230,6 +230,19 @@ class Room {
   final RoomType type;
   RoomStatus status;
 
+  /// What the backend says of the room: its type as the hotel named it, the price per night and its description.
+  int? roomTypeId;
+  String typeName = '';
+  double? price;
+  String description = '';
+  List<String> amenities = const [];
+
+  /// Statuses the backend allows next (its room map); null when it did not say, and then every status is offered.
+  Set<RoomStatus>? allowedNext;
+
+  /// Under maintenance longer than the hotel's limit (US-04).
+  bool maintenanceOverdue = false;
+
   Room({
     required this.id,
     required this.number,
@@ -237,6 +250,8 @@ class Room {
     required this.type,
     this.status = RoomStatus.available,
   });
+
+  String get typeLabel => typeName.isEmpty ? type.label : typeName;
 }
 
 class TimelineEvent {

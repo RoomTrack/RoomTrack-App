@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/backend/remote_extras.dart';
 import '../../core/hotel_store.dart';
 import '../../domain/models.dart';
 import '../../shared/format.dart';
@@ -14,9 +15,25 @@ class ShiftsPage extends StatefulWidget {
 }
 
 class _ShiftsPageState extends State<ShiftsPage> {
+  /// Coverage gaps of the backend, by shift: how many people are missing and whether the area is critical.
+  Map<int, CoverageGap> _gaps = const {};
+  int _gapsVersion = -1;
+
+  /// Reloaded whenever the shifts change (a member added or removed).
+  void _loadGaps(HotelStore store) {
+    final remote = store.remote;
+    final version = Object.hashAll(store.shifts.map((s) => Object.hash(s.id, s.staffIds.length)));
+    if (remote == null || !remote.hasShifts || store.currentUser?.role != UserRole.admin || version == _gapsVersion) return;
+    _gapsVersion = version;
+    remote.coverageGaps().then((gaps) {
+      if (mounted) setState(() => _gaps = {for (final g in gaps) g.shiftId: g});
+    }).catchError((_) {});
+  }
+
   @override
   Widget build(BuildContext context) {
     return StoreBuilder(builder: (context, store) {
+      _loadGaps(store);
       final user = store.currentUser!;
       final isAdmin = user.role == UserRole.admin;
       final days = (store.shifts.map((s) => s.date).toSet().toList()..sort());
@@ -92,7 +109,12 @@ class _ShiftsPageState extends State<ShiftsPage> {
                         Icon(shift.area.icon, size: 18, color: kPrimaryDark),
                         const SizedBox(width: 6),
                         Expanded(child: Text('${shift.area.label} · ${shift.label} (${shift.hours})', style: const TextStyle(fontWeight: FontWeight.w800))),
-                        if (shift.hasCoverageGap) Pill(text: 'Faltan ${shift.minStaff - shift.staffIds.length}', color: kError),
+                        if (_gaps[shift.id]?.critical ?? false) ...[
+                          const Pill(text: 'Crítico', color: kError, icon: Icons.priority_high),
+                          const SizedBox(width: 4),
+                        ],
+                        if (shift.hasCoverageGap)
+                          Pill(text: 'Faltan ${_gaps[shift.id]?.missing ?? shift.minStaff - shift.staffIds.length}', color: kError),
                       ],
                     ),
                     const SizedBox(height: 6),

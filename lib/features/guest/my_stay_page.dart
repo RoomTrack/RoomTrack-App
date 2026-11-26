@@ -8,6 +8,7 @@ import '../../shared/format.dart';
 import '../../shared/ui.dart';
 import '../front_desk/stay_detail_page.dart' show cancelRemoteBooking;
 import '../payments/folio_card.dart';
+import '../payments/folio_sheets.dart';
 import '../payments/payment_sheet.dart';
 import 'guest_chat_page.dart';
 import 'rating_card.dart';
@@ -60,12 +61,28 @@ class MyStayPage extends StatelessWidget {
   List<Widget> _inHouse(BuildContext context, HotelStore store, Stay stay) {
     final balance = store.balanceOf(stay);
     if (store.isRemote) {
+      final folios = store.remote!.hasFolios;
       return [
         AccountSummary(stay: stay, store: store),
         const SizedBox(height: 20),
         _MockupButton(text: 'Llave digital', icon: Icons.key_outlined, filled: true, onPressed: () => _showKey(context, store, stay)),
         const SizedBox(height: 12),
-        const InfoRow(Icons.info_outline, 'Para extender tu estadía o hacer el check-out, escribe a recepción desde Mensajes.'),
+        if (folios) ...[
+          _MockupButton(
+            text: balance > 0 ? 'Pagar ${money(balance)} y hacer check-out' : 'Hacer check-out',
+            icon: Icons.logout,
+            onPressed: () => _remoteCheckOut(context, store, stay),
+          ),
+          Center(
+            child: TextButton.icon(
+              icon: const Icon(Icons.receipt_long_outlined, size: 18),
+              label: Text(stay.fiscalData == null ? 'Necesito factura' : 'Factura a ${stay.fiscalData!.businessName}'),
+              onPressed: () => editFiscalData(context, store, stay),
+            ),
+          ),
+          const InfoRow(Icons.info_outline, 'Para extender tu estadía, escribe a recepción desde Mensajes.'),
+        ] else
+          const InfoRow(Icons.info_outline, 'Para extender tu estadía o hacer el check-out, escribe a recepción desde Mensajes.'),
       ];
     }
     return [
@@ -150,6 +167,19 @@ class MyStayPage extends StatelessWidget {
       if (!ok || !context.mounted) return;
     }
     runAction(context, () => store.checkOut(stay.id), success: 'Check-out completado. Te enviamos el comprobante por correo.');
+  }
+
+  /// US-14: the pending charges are paid first (the backend refuses the check-out with a balance).
+  Future<void> _remoteCheckOut(BuildContext context, HotelStore store, Stay stay) async {
+    final balance = store.balanceOf(stay);
+    if (balance > 0) {
+      final paid = await showFolioPaymentSheet(context, stay, balance: balance, title: 'Saldo de tu cuenta');
+      if (!paid || !context.mounted) return;
+    }
+    final ok = await confirm(context, 'Check-out', '¿Confirmas que finalizas tu estancia? Tu código de acceso dejará de funcionar.');
+    if (!ok || !context.mounted) return;
+    await runAsync(context, () => store.remote!.checkOut(stay.id),
+        success: 'Check-out completado. Te enviamos el resumen de tu estadía por correo.');
   }
 
   Future<void> _extend(BuildContext context, HotelStore store, Stay stay) async {

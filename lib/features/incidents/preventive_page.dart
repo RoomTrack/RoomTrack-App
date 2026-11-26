@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/hotel_store.dart';
+import '../../domain/models.dart';
 import '../../shared/format.dart';
 import '../../shared/ui.dart';
 
@@ -29,13 +30,40 @@ class PreventivePage extends StatelessWidget {
                   InfoRow(Icons.event_repeat, 'Cada ${plan.frequencyDays} días'),
                   InfoRow(Icons.event, 'Próxima: ${fmtDateTime(plan.nextDue)}',
                       color: plan.nextDue.difference(store.now).inDays < 2 ? kWarning : kMuted),
-                  if (plan.generated.isNotEmpty) InfoRow(Icons.history, '${plan.generated.length} veces generada'),
+                  if (store.remote?.hasPreventivePlans == true)
+                    InfoRow(Icons.notifications_active_outlined, 'Recordatorio ${plan.reminderDaysBefore} ${plan.reminderDaysBefore == 1 ? 'día' : 'días'} antes'),
+                  if (plan.timesGenerated > 0) InfoRow(Icons.history, '${plan.timesGenerated} ${plan.timesGenerated == 1 ? 'vez generada' : 'veces generada'}'),
+                  if (store.remote?.hasPreventivePlans == true)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.event_busy_outlined),
+                        label: const Text('Desactivar'),
+                        onPressed: () => _deactivate(context, store, plan),
+                      ),
+                    ),
                 ],
               ),
             ),
         ],
       );
     });
+  }
+
+  Future<void> _deactivate(BuildContext context, HotelStore store, PreventiveTask plan) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Desactivar preventivo'),
+        content: Text('"${plan.title}" dejará de generarse. Las tareas ya generadas se mantienen.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Desactivar')),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await runAsync(context, () => store.remote!.deactivatePreventive(plan.id), success: 'Preventivo desactivado.');
   }
 
   Future<void> _create(BuildContext context, HotelStore store) async {
@@ -93,6 +121,15 @@ class PreventivePage extends StatelessWidget {
       ),
     );
     if (saved != true || !context.mounted) return;
+    final remote = store.remote;
+    if (remote != null && remote.hasPreventivePlans) {
+      await runAsync(
+        context,
+        () => remote.schedulePreventive(title: title.text, roomId: roomId, frequencyDays: frequency, firstDue: firstDue),
+        success: 'Tarea preventiva programada: mantenimiento recibirá un recordatorio antes de cada fecha.',
+      );
+      return;
+    }
     runAction(
       context,
       () => store.schedulePreventive(title: title.text, roomId: roomId, frequencyDays: frequency, firstDue: firstDue),

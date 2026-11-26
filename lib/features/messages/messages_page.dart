@@ -21,14 +21,21 @@ class MessagesPage extends StatelessWidget {
           .map((m) => m.channel)
           .toSet()
           .where((channel) {
-        final task = store.taskById(int.parse(channel.split(':')[1]));
+        // A closed task of the backend leaves the store.
+        final task = store.tasks.where((t) => t.id == int.parse(channel.split(':')[1])).firstOrNull;
+        if (task == null) return false;
         return user.role == UserRole.admin ||
             user.role == UserRole.reception ||
             task.assigneeId == user.id ||
             store.messagesIn(channel).any((m) => m.authorId == user.id);
       }).toList();
       final guestChannels = user.role == UserRole.admin || user.role == UserRole.reception
-          ? store.messages.where((m) => m.channel.startsWith('guest:')).map((m) => m.channel).toSet().toList()
+          ? store.messages
+              .where((m) => m.channel.startsWith('guest:'))
+              .map((m) => m.channel)
+              .toSet()
+              .where((channel) => store.stays.any((s) => s.id == int.parse(channel.split(':')[1])))
+              .toList()
           : <String>[];
 
       return ListView(

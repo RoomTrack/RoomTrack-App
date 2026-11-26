@@ -251,7 +251,10 @@ class ChecklistItem {
   final bool required;
   bool done;
 
-  ChecklistItem(this.label, {this.required = true, this.done = false});
+  /// Id of the item in the backend's task; null while the checklist lives on this device.
+  final int? remoteId;
+
+  ChecklistItem(this.label, {this.required = true, this.done = false, this.remoteId});
 }
 
 class CleaningTask {
@@ -269,6 +272,9 @@ class CleaningTask {
   /// Instructions for housekeeping (from the backend).
   String notes = '';
 
+  /// Progress the backend reports while its checklist has not been loaded yet (the list brings only the percentage).
+  double? reportedProgress;
+
   CleaningTask({
     required this.id,
     required this.roomId,
@@ -282,6 +288,7 @@ class CleaningTask {
   bool get isOpen => status != TaskStatus.done;
 
   double get progress {
+    if (reportedProgress != null) return reportedProgress!;
     if (checklist.isEmpty) return 1;
     return checklist.where((item) => item.done).length / checklist.length;
   }
@@ -346,6 +353,9 @@ class GuestRequest {
   final int createdById;
   DateTime? resolvedAt;
   final List<TimelineEvent> events = [];
+
+  /// Who of the area attends it (backend requests).
+  int? assigneeId;
 
   GuestRequest({
     required this.id,
@@ -517,6 +527,9 @@ class AppNotification {
 class OperationalAlert {
   final int id;
 
+  /// The backend's alerts (US-23) come from an incident: they close when it is resolved, not by hand.
+  int? incidentId;
+
   /// Identifies the condition that raised it, so it is raised only once.
   final String key;
   final String title;
@@ -602,6 +615,15 @@ class PreventiveTask {
   bool reminded;
   final List<DateTime> generated = [];
 
+  /// Days before each due date that maintenance is reminded (2 on this device).
+  final int reminderDaysBefore;
+
+  /// A deactivated plan no longer generates tasks (backend plans only).
+  bool active;
+
+  /// Tasks the backend's scheduler already generated (it does not send their dates).
+  int? generatedCount;
+
   PreventiveTask({
     required this.id,
     required this.title,
@@ -609,7 +631,12 @@ class PreventiveTask {
     required this.frequencyDays,
     required this.nextDue,
     this.reminded = false,
+    this.reminderDaysBefore = 2,
+    this.active = true,
+    this.generatedCount,
   });
+
+  int get timesGenerated => generatedCount ?? generated.length;
 }
 
 class Shift {
@@ -621,6 +648,9 @@ class Shift {
   final int endHour;
   final int minStaff;
   final List<int> staffIds;
+
+  /// Names of the assignees as the backend gives them (colleagues are not in every role's store).
+  final Map<int, String> staffNames = {};
 
   Shift({
     required this.id,
@@ -665,6 +695,10 @@ class Handover {
   final DateTime createdAt;
   final List<String> openItems;
   final Map<int, DateTime> readBy = {};
+
+  /// E-mails of the author and of the readers as the backend recorded them.
+  String? authorEmail;
+  final Map<int, String> readerEmails = {};
 
   Handover({
     required this.id,

@@ -105,7 +105,9 @@ class _ProfilePageState extends State<ProfilePage> {
                   SwitchListTile(
                     title: Text(type.label),
                     value: _user.wants(type),
-                    onChanged: (value) => store.setNotificationPref(_user, type, value),
+                    onChanged: (value) => store.remote == null
+                        ? store.setNotificationPref(_user, type, value)
+                        : runAsync(context, () => store.remote!.setNotificationPref(_user, type, value)),
                   ),
               ],
             ),

@@ -80,12 +80,19 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
                       ],
                     ),
                   ),
+                  if (task.reportedProgress != null)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Center(child: Text('Cargando el checklist…', style: TextStyle(color: kMuted))),
+                    ),
                   for (var i = 0; i < task.checklist.length; i++)
                     CheckboxListTile(
                       value: task.checklist[i].done,
                       onChanged: !task.isOpen || !canWork || task.status == TaskStatus.pending
                           ? null
-                          : (value) => store.toggleChecklistItem(task.id, i, value ?? false),
+                          : (value) => cloud == null
+                              ? store.toggleChecklistItem(task.id, i, value ?? false)
+                              : runAsync(context, () => cloud.markChecklistItem(task.id, i, value ?? false)),
                       title: Text(task.checklist[i].label),
                       subtitle: task.checklist[i].required
                           ? (!task.checklist[i].done && task.status == TaskStatus.inProgress

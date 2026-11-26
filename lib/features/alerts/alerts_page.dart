@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../shared/format.dart';
+import '../incidents/incident_detail_page.dart';
 import '../../shared/ui.dart';
 
 /// Automatic delay alerts and their history (US-23).
@@ -35,14 +36,22 @@ class AlertsPage extends StatelessWidget {
                   Text(timeAgo(alert.createdAt, store.now), style: const TextStyle(color: kMuted, fontSize: 12)),
                   Align(
                     alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      icon: const Icon(Icons.check),
-                      label: const Text('Marcar atendida'),
-                      onPressed: () async {
-                        final note = await askText(context, title: 'Resolución', label: '¿Qué se hizo?');
-                        if (note != null) store.resolveAlert(alert.id, note);
-                      },
-                    ),
+                    // A backend alert closes when its incident is resolved.
+                    child: alert.incidentId != null
+                        ? TextButton.icon(
+                            icon: const Icon(Icons.open_in_new),
+                            label: const Text('Ver incidencia'),
+                            onPressed: () => Navigator.push(context,
+                                MaterialPageRoute(builder: (_) => IncidentDetailPage(incidentId: alert.incidentId!))),
+                          )
+                        : TextButton.icon(
+                            icon: const Icon(Icons.check),
+                            label: const Text('Marcar atendida'),
+                            onPressed: () async {
+                              final note = await askText(context, title: 'Resolución', label: '¿Qué se hizo?');
+                              if (note != null) store.resolveAlert(alert.id, note);
+                            },
+                          ),
                   ),
                 ],
               ),

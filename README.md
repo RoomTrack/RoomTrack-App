@@ -264,14 +264,20 @@ flutter test test/backend/remote_hotel_live_test.dart --dart-define=API_BASE_URL
 
 ## Estado de la integración con el backend
 
-| Ya usa el backend | Todavía solo en la app (próximas fases del backend) |
+| Ya usa el backend | Todavía solo en la app |
 |---|---|
-| Login, MFA, verificación de correo, recuperación y cambio de contraseña | Tareas de limpieza y checklist |
-| Habitaciones, cambio de estado e historial | Incidencias y mantenimiento preventivo |
-| Alta, rol y desactivación del personal | Solicitudes y catálogo de servicios |
-| Reservas y registro de pagos en recepción | Mensajes, notificaciones y alertas |
-| Check-in digital con foto del documento y código de acceso | Turnos, entrega de turno y evaluaciones |
-| Métricas del mes | Check-out, cargos adicionales y extensión de estadía |
+| Login, MFA, verificación de correo, recuperación y cambio de contraseña | Configuración del checklist por tipo de habitación (el backend ya la tiene) |
+| Habitaciones, cambio de estado e historial | Catálogo de servicios (la solicitud sí va al backend) |
+| Alta, rol y desactivación del personal | Extensión de estadía |
+| Reservas, registro de pagos y cancelación | Evaluación de la estancia y analítica detallada |
+| Check-in digital con foto del documento y código de acceso | Reportes programados |
+| Tareas de limpieza con su checklist por tipo de habitación (US-05 a US-07) | Notificaciones push en el dispositivo (falta Firebase en la app) |
+| Incidencias, recurrencias, mantenimiento preventivo y alertas (US-08 a US-10, US-23, US-30) | |
+| Solicitudes de huéspedes y su derivación por área (US-11, US-19, US-33) | |
+| Mensajes: canales por área, comentarios en tareas y chat con recepción (US-12, US-20) | |
+| Folio: cargos adicionales, garantía, pago dividido, factura, comprobantes y check-out (US-14 a US-17) | |
+| Turnos, huecos de cobertura, cambios de turno y entrega de turno (US-31, US-32) | |
+| Preferencias de notificación (US-22) y métricas del mes | |
 
-Mientras tanto, lo que vive solo en la app se guarda en memoria del dispositivo. Cuando limpieza o mantenimiento
-cambian el estado de una habitación, ese cambio sí se envía al backend.
+Cada módulo se detecta en la sincronización: con un backend que aún no lo tiene (responde 404), esa parte sigue
+funcionando en memoria del dispositivo como antes.

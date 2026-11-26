@@ -43,8 +43,14 @@ class _HandoverPageState extends State<HandoverPage> {
                 AppButton(
                   text: 'Registrar entrega de turno',
                   icon: Icons.swap_horiz,
-                  onPressed: () {
-                    final ok = runAction(context, () => store.createHandover(user, _notes.text), success: 'Entrega registrada para el siguiente turno.');
+                  onPressed: () async {
+                    const success = 'Entrega registrada: avisamos al siguiente turno.';
+                    final remote = store.remote;
+                    final ok = remote != null && remote.hasHandovers
+                        // An administrator hands over the front desk; the others, the area of their role.
+                        ? await runAsync(context, () => remote.createHandover(_notes.text, area: area == null ? Area.reception : null),
+                            success: success)
+                        : runAction(context, () => store.createHandover(user, _notes.text), success: success);
                     if (ok) _notes.clear();
                   },
                 ),
@@ -76,7 +82,8 @@ class HandoverCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${store.userName(handover.authorId)} · ${handover.area.label}', style: const TextStyle(fontWeight: FontWeight.w900)),
+            Text('${store.userById(handover.authorId)?.name ?? handover.authorEmail ?? 'Colaborador'} · ${handover.area.label}',
+                style: const TextStyle(fontWeight: FontWeight.w900)),
             Text(fmtDateTime(handover.createdAt), style: const TextStyle(color: kMuted, fontSize: 12)),
             if (handover.notes.isNotEmpty) ...[const SizedBox(height: 8), Text(handover.notes)],
             if (handover.openItems.isNotEmpty) ...[
@@ -85,14 +92,18 @@ class HandoverCard extends StatelessWidget {
             ],
             const SizedBox(height: 8),
             for (final entry in handover.readBy.entries)
-              InfoRow(Icons.done_all, 'Leído por ${store.userName(entry.key)} · ${fmtDateTime(entry.value)}', color: kSuccess),
+              InfoRow(Icons.done_all,
+                  'Leído por ${store.userById(entry.key)?.name ?? handover.readerEmails[entry.key] ?? 'Colaborador'} · ${fmtDateTime(entry.value)}',
+                  color: kSuccess),
             if (!read && !isMine)
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.icon(
                   icon: const Icon(Icons.check),
                   label: const Text('Marcar como leído'),
-                  onPressed: () => store.markHandoverRead(handover.id, me.id),
+                  onPressed: () => store.remote?.hasHandovers == true
+                      ? runAsync(context, () => store.remote!.acknowledgeHandover(handover.id), success: 'Lectura confirmada.')
+                      : store.markHandoverRead(handover.id, me.id),
                 ),
               ),
           ],

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/backend/remote_extras.dart';
+import '../../core/hotel_store.dart';
 import '../../domain/models.dart';
 import '../../shared/format.dart';
 import '../../shared/ui.dart';
@@ -37,6 +39,7 @@ class _PaymentsPageState extends State<PaymentsPage> {
             ),
             const SizedBox(height: 10),
           ],
+          if (store.isRemote) const _HotelHistory() else ...[
           Wrap(
             spacing: 8,
             runSpacing: 4,
@@ -90,8 +93,103 @@ class _PaymentsPageState extends State<PaymentsPage> {
                 ),
               );
             }),
+          ],
         ],
       );
     });
+  }
+}
+
+/// The hotel's money movements as the backend records them (US-17): booking and folio payments, refunds, deposits
+/// and receipts, for the chosen period.
+class _HotelHistory extends StatefulWidget {
+  const _HotelHistory();
+
+  @override
+  State<_HotelHistory> createState() => _HotelHistoryState();
+}
+
+class _HotelHistoryState extends State<_HotelHistory> {
+  final _remote = HotelStore.instance.remote!;
+  int _days = 30;
+  late Future<List<PaymentHistoryEntry>> _entries = _load();
+
+  Future<List<PaymentHistoryEntry>> _load() {
+    final now = HotelStore.instance.now;
+    return _remote.paymentHistory(from: now.subtract(Duration(days: _days)), to: now);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final store = HotelStore.instance;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final days in const [7, 30, 90])
+              ChoiceChip(
+                label: Text('$days días'),
+                selected: _days == days,
+                onSelected: (_) => setState(() {
+                  _days = days;
+                  _entries = _load();
+                }),
+              ),
+          ],
+        ),
+        FutureBuilder(
+          future: _entries,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) return Text('${snapshot.error}', style: const TextStyle(color: kError));
+            final entries = snapshot.data;
+            if (entries == null) return const Padding(padding: EdgeInsets.all(16), child: LinearProgressIndicator());
+            final income = entries.where((e) => e.type == 'BookingPayment' || e.type == 'FolioPayment').fold(0.0, (sum, e) => sum + e.amount);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SectionHeader(title: '${entries.length} movimientos', subtitle: 'Cobrado: ${money(income)}'),
+                if (entries.isEmpty) const EmptyState(icon: Icons.receipt_long_outlined, message: 'Sin movimientos en el periodo.'),
+                for (final entry in entries.take(150))
+                  Builder(builder: (context) {
+                    final stay = store.stays.where((s) => s.id == entry.bookingId).firstOrNull;
+                    final color = entry.amount < 0 ? kPrimary : (entry.type == 'Receipt' ? kMuted : kSuccess);
+                    return AppCard(
+                      onTap: stay == null ? null : () => Navigator.push(context, MaterialPageRoute(builder: (_) => StayDetailPage(stayId: stay.id))),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(stay?.guestName ?? 'Reserva ${entry.bookingId}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                              ),
+                              Text(money(entry.amount), style: TextStyle(fontWeight: FontWeight.w900, color: color)),
+                            ],
+                          ),
+                          Text([entry.typeLabel, ?entry.method, ?entry.reference].join(' · '), style: const TextStyle(color: kMuted)),
+                          Row(
+                            children: [
+                              Expanded(child: Text(fmtDateTime(entry.at), style: const TextStyle(color: kMuted, fontSize: 12))),
+                              if (entry.receiptId != null)
+                                TextButton.icon(
+                                  icon: const Icon(Icons.forward_to_inbox_outlined, size: 18),
+                                  label: const Text('Reenviar'),
+                                  onPressed: () => runAsync(context, () => _remote.resendReceipt(entry.receiptId!),
+                                      success: 'Comprobante reenviado al huésped.'),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            );
+          },
+        ),
+      ],
+    );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/backend/remote_hotel.dart';
 import '../../core/hotel_store.dart';
 import '../../shared/format.dart';
 import '../../shared/ui.dart';
@@ -17,6 +18,15 @@ class ChatView extends StatefulWidget {
 
 class _ChatViewState extends State<ChatView> {
   final TextEditingController _text = TextEditingController();
+
+  /// The backend's conversation of the channel, when it has them.
+  RemoteHotel? get _cloud => HotelStore.instance.remote?.hasConversations == true ? HotelStore.instance.remote : null;
+
+  @override
+  void initState() {
+    super.initState();
+    _cloud?.loadChannel(widget.channel).catchError((_) {});
+  }
 
   @override
   void dispose() {
@@ -95,9 +105,18 @@ class _ChatViewState extends State<ChatView> {
     });
   }
 
-  void _send() {
+  Future<void> _send() async {
     final store = HotelStore.instance;
-    store.sendMessage(widget.channel, store.currentUser!, _text.text);
+    final text = _text.text;
+    final cloud = _cloud;
+    if (cloud == null) {
+      store.sendMessage(widget.channel, store.currentUser!, text);
+      _text.clear();
+      return;
+    }
+    if (text.trim().isEmpty) return;
     _text.clear();
+    final sent = await runAsync(context, () => cloud.sendMessage(widget.channel, text));
+    if (!sent && mounted && _text.text.isEmpty) _text.text = text;
   }
 }

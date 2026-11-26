@@ -5,15 +5,32 @@ import '../../domain/models.dart';
 import '../../shared/format.dart';
 import '../../shared/ui.dart';
 import '../payments/folio_card.dart';
+import '../payments/folio_sheets.dart';
 import '../payments/payment_sheet.dart';
+import '../profiles/guest_profile_sheet.dart';
 import 'check_in_sheet.dart';
 import 'register_payment_sheet.dart';
+import 'remote_booking_sheets.dart';
 
 /// Reception's view of a stay: folio, collection and assisted check-out (US-16, US-17, US-27).
-class StayDetailPage extends StatelessWidget {
+class StayDetailPage extends StatefulWidget {
   final int stayId;
 
   const StayDetailPage({super.key, required this.stayId});
+
+  @override
+  State<StayDetailPage> createState() => _StayDetailPageState();
+}
+
+class _StayDetailPageState extends State<StayDetailPage> {
+  int get stayId => widget.stayId;
+
+  @override
+  void initState() {
+    super.initState();
+    // The folio and the receipts come with the stay.
+    HotelStore.instance.remote?.refreshFolio(stayId).catchError((_) {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +78,7 @@ class StayDetailPage extends StatelessWidget {
             ),
             FolioCard(stay: stay, store: store),
             const SizedBox(height: 8),
-            if (remote) ..._remoteActions(context, stay)
+            if (remote) ..._remoteActions(context, store, stay, balance)
             else ...[
             if (stay.status == StayStatus.reserved || stay.status == StayStatus.checkInInProgress)
               AppButton(text: 'Hacer check-in', icon: Icons.key_outlined, dark: true, onPressed: () => showCheckInSheet(context, stay)),
@@ -120,6 +137,11 @@ class StayDetailPage extends StatelessWidget {
                       ),
                       TextButton(
                         onPressed: () {
+                          if (remote) {
+                            runAsync(context, () => store.remote!.resendReceipt(receipt.id),
+                                success: 'Comprobante reenviado a ${receipt.email}.');
+                            return;
+                          }
                           store.resendReceipt(receipt.id);
                           showAppSnack(context, 'Comprobante reenviado a ${receipt.email}.');
                         },
@@ -136,18 +158,66 @@ class StayDetailPage extends StatelessWidget {
   }
 
   /// What the backend lets the front desk do with a booking today.
-  List<Widget> _remoteActions(BuildContext context, Stay stay) => [
-        if (stay.awaitingPayment)
-          AppButton(text: 'Registrar pago', icon: Icons.point_of_sale, dark: true, onPressed: () => showRegisterPaymentSheet(context, stay)),
-        if (stay.status == StayStatus.reserved && !stay.awaitingPayment)
-          const InfoRow(Icons.phone_iphone, 'Reserva pagada: el huésped completa su check-in digital desde la app.', color: kSuccess),
-        if (stay.status == StayStatus.checkedIn)
-          const InfoRow(Icons.info_outline, 'El check-out y los cargos adicionales llegan con la siguiente fase del backend.'),
+  List<Widget> _remoteActions(BuildContext context, HotelStore store, Stay stay, double balance) {
+    final folios = store.remote!.hasFolios;
+    return [
+      if (stay.awaitingPayment)
+        AppButton(text: 'Registrar pago', icon: Icons.point_of_sale, dark: true, onPressed: () => showRegisterPaymentSheet(context, stay)),
+      if (stay.status == StayStatus.reserved && !stay.awaitingPayment) ...[
+        const InfoRow(Icons.phone_iphone, 'Reserva pagada: el huésped puede hacer su check-in digital desde la app.', color: kSuccess),
+        const SizedBox(height: 10),
+        AppButton(text: 'Check-in en recepción', icon: Icons.key_outlined, dark: true, onPressed: () => showAssistedCheckInSheet(context, stay)),
+      ],
+      if (stay.status == StayStatus.reserved) ...[
+        const SizedBox(height: 10),
+        AppButton(text: 'Cambiar fechas o habitación', icon: Icons.edit_calendar_outlined, outlined: true, onPressed: () => showRescheduleSheet(context, stay)),
+      ],
+      const SizedBox(height: 10),
+      AppButton(text: 'Ficha del huésped', icon: Icons.badge_outlined, outlined: true, onPressed: () => showGuestProfileSheet(context, stay)),
+      // US-15: the guarantee deposit is held at check-in.
+      if (folios && stay.depositHeld == 0 && !stay.awaitingPayment && (stay.status == StayStatus.reserved || stay.status == StayStatus.checkedIn)) ...[
+        const SizedBox(height: 10),
+        AppButton(text: 'Registrar garantía', icon: Icons.shield_outlined, outlined: true, onPressed: () => showDepositSheet(context, stay)),
+      ],
+      if (stay.status == StayStatus.checkedIn && !folios)
+        const InfoRow(Icons.info_outline, 'Este backend aún no tiene cargos adicionales ni check-out.'),
+      if (stay.status == StayStatus.checkedIn && folios) ...[
+        const SizedBox(height: 10),
+        AppButton(text: 'Agregar cargo', icon: Icons.add_card, outlined: true, onPressed: () => showFolioChargeSheet(context, stay)),
+        if (balance > 0) ...[
+          const SizedBox(height: 10),
+          AppButton(
+            text: 'Cobrar saldo ${money(balance)}',
+            icon: Icons.point_of_sale,
+            onPressed: () => showFolioPaymentSheet(context, stay, balance: balance, title: 'Cobro en recepción'),
+          ),
+        ],
+        const SizedBox(height: 10),
+        AppButton(
+          text: 'Registrar check-out',
+          icon: Icons.logout,
+          dark: true,
+          onPressed: () async {
+            if (balance > 0) {
+              showAppSnack(context, 'Primero cobra el saldo de ${money(balance)}.', error: true);
+              return;
+            }
+            final ok = await confirm(context, 'Check-out',
+                'La habitación pasará a pendiente de limpieza, el código de acceso dejará de funcionar y se liberará la garantía.');
+            if (!ok || !context.mounted) return;
+            await runAsync(context, () => store.remote!.checkOut(stay.id),
+                success: 'Check-out registrado. Enviamos el resumen de la estadía a ${stay.guestEmail}.');
+          },
+        ),
+        const SizedBox(height: 10),
+        AppButton(text: 'Datos para factura', icon: Icons.business_outlined, outlined: true, onPressed: () => editFiscalData(context, store, stay)),
+      ],
         if (stay.status == StayStatus.reserved) ...[
           const SizedBox(height: 10),
           AppButton(text: 'Cancelar reserva', icon: Icons.event_busy_outlined, outlined: true, onPressed: () => cancelRemoteBooking(context, stay)),
         ],
-      ];
+    ];
+  }
 }
 
 /// Confirms and cancels a booking in the backend; returns true when it was cancelled.

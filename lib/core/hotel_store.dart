@@ -676,6 +676,8 @@ class HotelStore extends ChangeNotifier {
       incidents.where((i) => i.roomId == roomId).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
   bool roomHasRecurringPattern(int roomId) {
+    // The backend flags the incident itself (US-10).
+    if (remote?.hasPreventivePlans == true) return incidents.any((i) => i.roomId == roomId && i.isOpen && i.recurring);
     final monthAgo = now.subtract(const Duration(days: 30));
     final counts = <String, int>{};
     for (final i in incidents.where((i) => i.roomId == roomId && !i.preventive && i.createdAt.isAfter(monthAgo))) {
@@ -1254,7 +1256,8 @@ class HotelStore extends ChangeNotifier {
   /// Time-based rules: escalations, delays, preventive work and scheduled reports.
   void runChecks() {
     // The backend escalates its own incidents (scheduled job); only on-device ones are checked here.
-    for (final incident in incidents.where((i) => i.isOpen && i.urgency == Priority.urgent && !i.escalated && (remote == null || i.preventive))) {
+    bool onDevice(Incident i) => remote == null || (i.preventive && !remote!.hasPreventivePlans);
+    for (final incident in incidents.where((i) => i.isOpen && i.urgency == Priority.urgent && !i.escalated && onDevice(i))) {
       if (now.difference(incident.createdAt) >= criticalIncidentLimit) {
         incident.escalated = true;
         incident.events.add(TimelineEvent(now, 'Escalada al administrador por demora'));
@@ -1284,7 +1287,8 @@ class HotelStore extends ChangeNotifier {
       }
     }
 
-    for (final task in preventiveTasks) {
+    // The backend's preventive plans are generated and reminded by its scheduler.
+    for (final task in remote?.hasPreventivePlans == true ? const <PreventiveTask>[] : preventiveTasks) {
       if (!task.reminded && task.nextDue.difference(now) <= const Duration(days: 2) && task.nextDue.isAfter(now)) {
         task.reminded = true;
         _notifyRole(UserRole.maintenance, 'Preventivo próximo', '${task.title} · Hab. ${roomById(task.roomId).number} vence el ${fmtShortDate(task.nextDue)}',

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/hotel_store.dart';
 import '../../domain/models.dart';
 import '../../shared/ui.dart';
+import '../profiles/staff_profile_page.dart';
 
 /// Create, edit role and deactivate staff accounts (US-03).
 class StaffAdminPage extends StatelessWidget {
@@ -47,6 +48,7 @@ class StaffAdminPage extends StatelessWidget {
                     itemBuilder: (_) => [
                       const PopupMenuItem(value: 'role', child: Text('Cambiar rol')),
                       PopupMenuItem(value: 'toggle', child: Text(user.active ? 'Desactivar cuenta' : 'Reactivar cuenta')),
+                      if (store.isRemote) const PopupMenuItem(value: 'profile', child: Text('Ficha de personal')),
                       if (store.isRemote) const PopupMenuItem(value: 'mfa', child: Text('Restablecer autenticador')),
                     ],
                   ),
@@ -59,6 +61,10 @@ class StaffAdminPage extends StatelessWidget {
   }
 
   Future<void> _onAction(BuildContext context, HotelStore store, AppUser user, String action) async {
+    if (action == 'profile') {
+      await Navigator.push(context, MaterialPageRoute(builder: (_) => StaffProfilePage(user: user)));
+      return;
+    }
     if (action == 'mfa') {
       final ok = await confirm(
         context,

@@ -98,6 +98,12 @@ class _RequestsPageState extends State<RequestsPage> {
       ),
     );
     if (saved != true || !context.mounted) return;
+    final remote = store.remote;
+    if (remote != null && remote.hasGuestRequests) {
+      await runAsync(context, () => remote.createRequest(title: description.text, area: area, roomId: stay.roomId),
+          success: 'Solicitud enviada a ${area.label}.');
+      return;
+    }
     runAction(
       context,
       () => store.createRequest(
@@ -123,6 +129,8 @@ class RequestCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final late = request.status != WorkStatus.resolved && store.now.difference(request.createdAt).inMinutes > request.etaMinutes;
+    final cloud = store.remote?.hasGuestRequests == true ? store.remote : null;
+    final me = store.currentUser!;
     return AppCard(
       borderColor: late ? kWarning : null,
       child: Column(
@@ -135,6 +143,7 @@ class RequestCard extends StatelessWidget {
             ],
           ),
           InfoRow(Icons.meeting_room_outlined, 'Hab. ${store.roomById(request.roomId).number} · ${request.area.label}'),
+          if (request.assigneeId != null) InfoRow(Icons.person_outline, 'A cargo de ${store.userName(request.assigneeId)}'),
           InfoRow(
             Icons.schedule,
             '${timeAgo(request.createdAt, store.now)} · estimado ${request.etaMinutes} min${late ? ' · demorada' : ''}',
@@ -149,16 +158,57 @@ class RequestCard extends StatelessWidget {
                 if (canRoute)
                   PopupMenuButton<Area>(
                     tooltip: 'Derivar',
-                    onSelected: (area) => store.deriveRequest(request.id, area),
+                    onSelected: (area) => cloud == null
+                        ? store.deriveRequest(request.id, area)
+                        : runAsync(context, () => cloud.routeRequest(request.id, area), success: 'Solicitud derivada a ${area.label}.'),
                     itemBuilder: (_) => [for (final a in Area.values) PopupMenuItem(value: a, child: Text('Derivar a ${a.label}'))],
                     child: const Padding(
                       padding: EdgeInsets.all(8),
                       child: Row(children: [Icon(Icons.alt_route, size: 18), SizedBox(width: 4), Text('Derivar')]),
                     ),
                   ),
+                // The admin knows the staff of each area; someone of the area takes an unassigned request.
+                if (cloud != null && me.role == UserRole.admin && store.staffOf(request.area.role).isNotEmpty)
+                  PopupMenuButton<int>(
+                    tooltip: 'Asignar',
+                    onSelected: (userId) => runAsync(context, () => cloud.assignRequest(request.id, userId),
+                        success: 'Solicitud asignada a ${store.userName(userId)}.'),
+                    itemBuilder: (_) => [
+                      for (final member in store.staffOf(request.area.role)) PopupMenuItem(value: member.id, child: Text(member.name)),
+                    ],
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Row(children: [Icon(Icons.person_add_alt, size: 18), SizedBox(width: 4), Text('Asignar')]),
+                    ),
+                  ),
+                if (cloud != null && request.assigneeId == null && me.role.area == request.area && me.role != UserRole.admin)
+                  TextButton(
+                    onPressed: () => runAsync(context, () => cloud.assignRequest(request.id, me.id), success: 'La solicitud quedó a tu cargo.'),
+                    child: const Text('Tomar'),
+                  ),
+                if (canRoute && cloud != null)
+                  TextButton(
+                    onPressed: () async {
+                      final note = await askText(context, title: 'Cancelar solicitud', label: 'Motivo (opcional)');
+                      if (note != null && context.mounted) {
+                        await runAsync(context, () => cloud.cancelRequest(request.id, note: note), success: 'Solicitud cancelada.');
+                      }
+                    },
+                    child: const Text('Cancelar'),
+                  ),
                 if (request.status == WorkStatus.pending)
-                  TextButton(onPressed: () => store.updateRequestStatus(request.id, WorkStatus.inProgress), child: const Text('En proceso')),
-                FilledButton(onPressed: () => store.updateRequestStatus(request.id, WorkStatus.resolved), child: const Text('Resuelta')),
+                  TextButton(
+                    onPressed: () => cloud == null
+                        ? store.updateRequestStatus(request.id, WorkStatus.inProgress)
+                        : runAsync(context, () => cloud.startRequest(request.id), success: 'Solicitud en proceso: el huésped ya lo ve.'),
+                    child: const Text('En proceso'),
+                  ),
+                FilledButton(
+                  onPressed: () => cloud == null
+                      ? store.updateRequestStatus(request.id, WorkStatus.resolved)
+                      : runAsync(context, () => cloud.resolveRequest(request.id), success: 'Solicitud atendida: avisamos al huésped.'),
+                  child: const Text('Resuelta'),
+                ),
               ],
             ),
         ],

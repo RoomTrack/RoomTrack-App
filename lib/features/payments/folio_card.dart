@@ -43,7 +43,9 @@ class FolioCard extends StatelessWidget {
                 ? '${money(stay.depositHeld)} devuelto'
                 : stay.depositHeld > 0
                     ? '${money(stay.depositHeld)} retenido'
-                    : '${money(stay.depositRequired)} pendiente',
+                    : stay.depositRequired > 0
+                        ? '${money(stay.depositRequired)} pendiente'
+                        : 'Sin garantía',
           ),
           if (payments.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -124,6 +126,15 @@ Future<void> editFiscalData(BuildContext context, HotelStore store, Stay stay) a
     ),
   );
   if (saved != true || !context.mounted) return;
+  final remote = store.remote;
+  if (remote != null && remote.hasFolios) {
+    await runAsync(
+      context,
+      () => remote.setInvoiceData(stay.id, FiscalData(ruc: ruc.text.trim(), businessName: name.text.trim(), address: address.text.trim())),
+      success: 'Los próximos comprobantes se emitirán como factura.',
+    );
+    return;
+  }
   runAction(
     context,
     () => store.setFiscalData(stay.id, FiscalData(ruc: ruc.text.trim(), businessName: name.text.trim(), address: address.text.trim())),

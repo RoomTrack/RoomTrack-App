@@ -355,5 +355,259 @@ void main() {
     await remote.createCleaningTask(10, priority: Priority.urgent);
     expect(calls, contains('POST /cleaning-tasks {"roomId":10,"priority":"Urgent"}'));
   });
+
+  test('US-07: el checklist del backend llega con la tarea y cada ítem se marca allí', () async {
+    final calls = <String>[];
+    Map<String, Object?> withChecklist({bool done = false}) => {
+          ...cleaningTask(status: 'InProgress', assignee: 3, history: const []),
+          'checklistProgress': done ? 50 : 0,
+          'checklist': [
+            {'id': 501, 'position': 1, 'label': 'Cambiar la ropa de cama', 'isRequired': true, 'isDone': done, 'doneAt': null, 'doneByUserId': null},
+            {'id': 502, 'position': 2, 'label': 'Revisar el minibar', 'isRequired': false, 'isDone': false, 'doneAt': null, 'doneByUserId': null},
+          ],
+        };
+    final remote = fakeBackend(
+      me: housekeeper,
+      signIn: {'id': 3, 'token': 'access'},
+      extra: {
+        'GET /cleaning-tasks': [{...cleaningTask(status: 'InProgress', assignee: 3), 'checklistProgress': 0}],
+        'GET /cleaning-tasks/60': withChecklist(),
+        'PUT /cleaning-tasks/60/checklist/501': () => withChecklist(done: true),
+      },
+      calls: calls,
+    );
+    await remote.signIn('limpieza@roomtrack.pe', 'x');
+    final store = remote.store;
+
+    // The list brings only the percentage.
+    expect(store.taskById(60).reportedProgress, 0);
+    await remote.refreshCleaningTask(60);
+    final task = store.taskById(60);
+    expect(task.reportedProgress, isNull);
+    expect(task.checklist.map((i) => i.label), ['Cambiar la ropa de cama', 'Revisar el minibar']);
+    await expectLater(remote.completeCleaningTask(60), throwsA(isA<DomainException>()));
+
+    await remote.markChecklistItem(60, 0, true);
+    expect(calls, contains('PUT /cleaning-tasks/60/checklist/501 {"done":true}'));
+    expect(store.taskById(60).checklist.first.done, isTrue);
+    // The items survive the list sync.
+    await remote.sync();
+    expect(store.taskById(60).checklist.first.remoteId, 501);
+  });
+
+  test('US-30 / US-10 / US-23: planes preventivos, incidencias recurrentes y alertas del backend', () async {
+    final calls = <String>[];
+    final remote = fakeBackend(
+      me: {'id': 1, 'email': 'admin@roomtrack.pe', 'firstName': 'Ana', 'lastName': 'Torres', 'role': 'admin', 'hotelId': 1},
+      signIn: {'id': 1, 'token': 'access'},
+      extra: {
+        'GET /incidents': [
+          {...incident(), 'kind': 'Corrective', 'isRecurring': true, 'recurrenceCount': 4},
+          {...incident(id: 42, status: 'Pending'), 'kind': 'Preventive', 'preventivePlanId': 4, 'blocksRoom': false},
+        ],
+        'GET /preventive-maintenance-plans': [
+          {'id': 4, 'hotelId': 1, 'roomId': 10, 'title': 'Limpiar filtros', 'description': null, 'frequencyDays': 90,
+            'nextDueOn': '2027-03-01', 'reminderDaysBefore': 3, 'isActive': true, 'generatedCount': 1, 'lastIncidentId': 42,
+            'lastGeneratedAt': null, 'createdByUserId': 4, 'createdAt': '2026-11-25T14:00:00+00:00'},
+        ],
+        'GET /incidents/alerts': [
+          {'kind': 'Escalation', 'raisedAt': '2026-11-25T16:00:00+00:00', 'incidentId': 40, 'roomId': 10, 'title': 'Ducha sin agua caliente',
+            'priority': 'Critical', 'status': 'Resolved', 'resolvedAt': '2026-11-25T16:40:00+00:00', 'resolvedByUserId': 4,
+            'resolutionNotes': 'Resistencia cambiada'},
+        ],
+        'POST /preventive-maintenance-plans': const {},
+      },
+      calls: calls,
+    );
+    remote.store.preventiveTasks.add(PreventiveTask(id: 1000001, title: 'Local', roomId: 10, frequencyDays: 7, nextDue: DateTime(2026)));
+    await remote.signIn('admin@roomtrack.pe', 'x');
+    final store = remote.store;
+
+    expect(remote.hasPreventivePlans, isTrue);
+    expect(store.preventiveTasks.map((p) => (p.id, p.timesGenerated, p.reminderDaysBefore)), [(4, 1, 3)]);
+    expect(store.incidentById(42).preventive, isTrue);
+    expect(store.incidentById(40).recurring, isTrue);
+    expect(store.roomHasRecurringPattern(10), isTrue);
+    final alert = store.alerts.single;
+    expect(alert.incidentId, 40);
+    expect(alert.resolved, isTrue);
+    expect(alert.resolution, 'Resistencia cambiada');
+
+    // The backend generates the tasks: the device does not.
+    store.runChecks();
+    expect(store.incidents.where((i) => i.preventive).map((i) => i.id), [42]);
+
+    await remote.schedulePreventive(title: 'Purgar calentador', roomId: 10, frequencyDays: 30, firstDue: DateTime(2026, 12, 3));
+    expect(calls, contains('POST /preventive-maintenance-plans '
+        '{"roomId":10,"title":"Purgar calentador","frequencyDays":30,"firstDueOn":"2026-12-03","reminderDaysBefore":2}'));
+  });
+
+  test('US-11 / US-19: las solicitudes vienen del backend con áreas numéricas', () async {
+    final calls = <String>[];
+    Map<String, Object?> request({int status = 0, int area = 0}) => {
+          'id': 90, 'hotelId': 1, 'roomId': 10, 'bookingId': 7, 'guestUserId': 6, 'title': 'Almohada extra', 'description': null,
+          'area': area, 'status': status, 'createdByUserId': 6, 'createdByGuest': true, 'createdAt': '2026-11-25T15:00:00+00:00',
+          'estimatedAttentionBy': '2026-11-25T15:20:00+00:00', 'assigneeUserId': null, 'startedAt': null, 'resolvedAt': null,
+          'cancelledAt': null, 'closingNote': null, 'history': null,
+        };
+    var listed = [request(), {...request(status: 3), 'id': 91}];
+    final remote = fakeBackend(
+      me: {'id': 2, 'email': 'recepcion@roomtrack.pe', 'firstName': 'Rosa', 'lastName': 'Díaz', 'role': 'reception', 'hotelId': 1},
+      signIn: {'id': 2, 'token': 'access'},
+      extra: {
+        'GET /guest-requests': () => listed,
+        'POST /guest-requests/90/route': () {
+          listed = [request(area: 1)];
+          return {...request(area: 1), 'history': [
+            {'action': 0, 'status': 0, 'detail': 'For Reception', 'actorUserId': 6, 'actorEmail': 'huesped@roomtrack.pe', 'occurredAt': '2026-11-25T15:00:00+00:00'},
+            {'action': 1, 'status': 0, 'detail': 'Reception → Housekeeping', 'actorUserId': 2, 'actorEmail': 'recepcion@roomtrack.pe', 'occurredAt': '2026-11-25T15:02:00+00:00'},
+          ]};
+        },
+      },
+      calls: calls,
+    );
+    await remote.signIn('recepcion@roomtrack.pe', 'x');
+    final store = remote.store;
+
+    // Cancelled requests leave the list; the promised time comes from the backend.
+    expect(store.requests.map((r) => r.id), [90]);
+    expect(store.requestById(90).area, Area.reception);
+    expect(store.requestById(90).etaMinutes, 20);
+    expect(store.requestById(90).stayId, 7);
+
+    await remote.routeRequest(90, Area.housekeeping);
+    expect(calls, contains('POST /guest-requests/90/route {"area":1}'));
+    expect(store.requestById(90).area, Area.housekeeping);
+    expect(store.requestById(90).events.map((e) => e.text),
+        ['Registrada para Recepción · huesped@roomtrack.pe', 'Derivada a Limpieza · recepcion@roomtrack.pe']);
+  });
+
+  test('US-12 / US-20: los canales de mensajes son conversaciones del backend', () async {
+    final calls = <String>[];
+    final remote = fakeBackend(
+      me: housekeeper,
+      signIn: {'id': 3, 'token': 'access'},
+      extra: {
+        'GET /conversations': [
+          {'id': 5, 'hotelId': 1, 'kind': 1, 'guestUserId': null, 'area': 1, 'subject': null, 'subjectId': null,
+            'createdAt': '2026-11-25T10:00:00+00:00', 'lastMessageAt': '2026-11-25T10:05:00+00:00', 'messageCount': 1},
+        ],
+        'GET /conversations/5': {
+          'conversation': {'id': 5, 'lastMessageAt': '2026-11-25T10:05:00+00:00'},
+          'messages': [
+            {'id': 800, 'conversationId': 5, 'senderUserId': 1, 'senderName': 'Ana Torres', 'senderIsGuest': false,
+              'body': 'Hoy llegan 12 huéspedes', 'sentAt': '2026-11-25T10:05:00+00:00'},
+          ],
+        },
+        'POST /conversations/areas/Housekeeping/messages': {'id': 801, 'conversationId': 5},
+      },
+      calls: calls,
+    );
+    await remote.signIn('limpieza@roomtrack.pe', 'x');
+    final store = remote.store;
+
+    expect(remote.hasConversations, isTrue);
+    expect(store.messagesIn(HotelStore.areaChannel(Area.housekeeping)).map((m) => m.text), ['Hoy llegan 12 huéspedes']);
+
+    await remote.sendMessage(HotelStore.areaChannel(Area.housekeeping), ' Entendido ');
+    expect(calls, contains('POST /conversations/areas/Housekeeping/messages {"body":"Entendido"}'));
+  });
+
+  test('US-14 a US-17: folio, pago dividido y check-out en el backend', () async {
+    final calls = <String>[];
+    var balance = 48.5;
+    Map<String, Object?> folio() => {
+          'bookingId': 7, 'bookingCode': 'SS-AAAA1111', 'status': balance > 0 ? 'Open' : 'Settled', 'chargesTotal': 48.5,
+          'paidTotal': 48.5 - balance, 'balance': balance,
+          'charges': [
+            {'id': 3, 'description': 'Minibar', 'category': 'Minibar', 'amount': 48.5, 'postedByUserId': 2, 'postedAt': '2026-10-06T20:00:00+00:00'},
+          ],
+          'payments': [
+            if (balance == 0) {'id': 9, 'amount': 48.5, 'method': 'Yape', 'operationNumber': '123', 'paidAt': '2026-10-07T10:00:00+00:00'},
+          ],
+          'deposit': {'amount': 150, 'status': 'Held', 'method': 'Cash', 'heldAt': '2026-10-05T15:00:00+00:00', 'releasedAt': null},
+          'invoiceData': null,
+        };
+    final remote = fakeBackend(
+      me: {'id': 2, 'email': 'recepcion@roomtrack.pe', 'firstName': 'Rosa', 'lastName': 'Díaz', 'role': 'reception', 'hotelId': 1},
+      signIn: {'id': 2, 'token': 'access'},
+      extra: {
+        'GET /bookings/7/folio': folio,
+        'GET /bookings/7/receipts': const [],
+        'POST /bookings/7/folio/payments': () {
+          balance = 0;
+          return {'folio': folio(), 'receipts': const []};
+        },
+        'POST /bookings/7/check-out': const {},
+      },
+      calls: calls,
+    );
+    await remote.signIn('recepcion@roomtrack.pe', 'x');
+    final store = remote.store;
+    final stay = store.stayById(7);
+
+    expect(remote.hasFolios, isTrue);
+    expect(stay.depositHeld, 150);
+    expect(stay.charges.map((c) => c.description), contains('Minibar'));
+    expect(store.balanceOf(stay), 48.5);
+
+    await remote.payFolio(7, [(amount: 30, method: 'Yape', operationNumber: '123'), (amount: 18.5, method: 'Cash', operationNumber: '')]);
+    expect(calls, contains('POST /bookings/7/folio/payments '
+        '{"parts":[{"amount":30.0,"method":"Yape","operationNumber":"123"},{"amount":18.5,"method":"Cash"}]}'));
+    expect(store.balanceOf(stay), 0);
+    // The folio payments survive the sync.
+    await remote.sync();
+    expect(store.balanceOf(store.stayById(7)), 0);
+
+    await remote.checkOut(7);
+    expect(calls, contains('POST /bookings/7/check-out'));
+  });
+
+  test('US-31 / US-32: turnos, cambios y entregas de turno del backend', () async {
+    final calls = <String>[];
+    final remote = fakeBackend(
+      me: housekeeper,
+      signIn: {'id': 3, 'token': 'access'},
+      extra: {
+        'GET /shifts': [
+          {'id': 20, 'hotelId': 1, 'date': '2026-12-01', 'period': 'Morning', 'area': 'Housekeeping', 'minimumStaff': 2, 'coverageGap': 1,
+            'assignees': [{'userId': 3, 'displayName': 'María Quispe'}]},
+          {'id': 21, 'hotelId': 1, 'date': '2026-12-02', 'period': 'Night', 'area': 'Housekeeping', 'minimumStaff': 1, 'coverageGap': 0,
+            'assignees': [{'userId': 9, 'displayName': 'Pedro Ruiz'}]},
+        ],
+        'GET /shift-swaps': const [],
+        'POST /shift-swaps': const {},
+        'GET /shift-handovers': [
+          {'id': 30, 'hotelId': 1, 'area': 'Housekeeping', 'authorUserId': 9, 'authorEmail': 'pedro@roomtrack.pe', 'notes': 'Falta la 201',
+            'createdAt': '2026-11-25T07:00:00+00:00',
+            'items': [{'kind': 'CleaningTask', 'referenceId': 60, 'roomId': 11, 'summary': 'Cleaning', 'status': 'Pending', 'priority': 'High', 'assigneeUserId': null}],
+            'acknowledgements': const [], 'acknowledgedByMe': false},
+        ],
+        'POST /shift-handovers/30/acknowledge': {
+          'id': 30, 'hotelId': 1, 'area': 'Housekeeping', 'authorUserId': 9, 'authorEmail': 'pedro@roomtrack.pe', 'notes': 'Falta la 201',
+          'createdAt': '2026-11-25T07:00:00+00:00', 'items': const [],
+          'acknowledgements': [{'userId': 3, 'email': 'limpieza@roomtrack.pe', 'acknowledgedAt': '2026-11-25T07:10:00+00:00'}],
+          'acknowledgedByMe': true,
+        },
+      },
+      calls: calls,
+    );
+    await remote.signIn('limpieza@roomtrack.pe', 'x');
+    final store = remote.store;
+
+    expect(remote.hasShifts, isTrue);
+    expect(store.shiftsOf(3).map((s) => (s.id, s.label, s.hours)), [(20, 'Mañana', '07:00 - 15:00')]);
+    expect(store.shifts.firstWhere((s) => s.id == 21).staffNames[9], 'Pedro Ruiz');
+    expect(store.shifts.firstWhere((s) => s.id == 20).hasCoverageGap, isTrue);
+
+    await remote.requestSwap(myShiftId: 20, colleagueUserId: 9, colleagueShiftId: 21);
+    expect(calls, contains('POST /shift-swaps {"myShiftId":20,"colleagueUserId":9,"colleagueShiftId":21}'));
+
+    final handover = store.latestHandoverFor(store.currentUser!)!;
+    expect(handover.authorEmail, 'pedro@roomtrack.pe');
+    expect(handover.openItems.single, startsWith('Limpieza hab. 201 · pendiente · alta'));
+    await remote.acknowledgeHandover(30);
+    expect(store.handovers.single.readBy.keys, [3]);
+  });
 }
 

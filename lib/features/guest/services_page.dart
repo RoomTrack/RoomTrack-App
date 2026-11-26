@@ -139,6 +139,15 @@ class _ServicesPageState extends State<ServicesPage> {
       ),
     );
     if (order != true || !context.mounted || stay == null) return;
+    final remote = store.remote;
+    if (remote != null && remote.hasGuestRequests) {
+      await runAsync(
+        context,
+        () => remote.requestService(service),
+        success: 'Solicitud enviada a ${service.area.label}. Tiempo estimado: ${service.area.etaMinutes} min.',
+      );
+      return;
+    }
     runAction(
       context,
       () => store.requestService(stay.id, service.id),
@@ -219,6 +228,13 @@ Future<void> showCreateRequestSheet(BuildContext context, HotelStore store) asyn
     ),
   );
   if (send != true || !context.mounted) return;
+  final remote = store.remote;
+  if (remote != null && remote.hasGuestRequests) {
+    // Without an area it reaches the front desk, which routes it.
+    await runAsync(context, () => remote.createRequest(title: text.text),
+        success: 'Recibimos tu solicitud. Recepción la derivará al área que corresponda.');
+    return;
+  }
   runAction(
     context,
     () => store.createRequest(roomId: stay.roomId!, stayId: stay.id, description: text.text, area: Area.reception, createdById: user.id),

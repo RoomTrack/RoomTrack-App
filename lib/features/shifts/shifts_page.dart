@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/backend/remote_extras.dart';
 import '../../core/hotel_store.dart';
 import '../../domain/models.dart';
 import '../../shared/format.dart';
@@ -14,14 +15,31 @@ class ShiftsPage extends StatefulWidget {
 }
 
 class _ShiftsPageState extends State<ShiftsPage> {
+  /// Coverage gaps of the backend, by shift: how many people are missing and whether the area is critical.
+  Map<int, CoverageGap> _gaps = const {};
+  int _gapsVersion = -1;
+
+  /// Reloaded whenever the shifts change (a member added or removed).
+  void _loadGaps(HotelStore store) {
+    final remote = store.remote;
+    final version = Object.hashAll(store.shifts.map((s) => Object.hash(s.id, s.staffIds.length)));
+    if (remote == null || !remote.hasShifts || store.currentUser?.role != UserRole.admin || version == _gapsVersion) return;
+    _gapsVersion = version;
+    remote.coverageGaps().then((gaps) {
+      if (mounted) setState(() => _gaps = {for (final g in gaps) g.shiftId: g});
+    }).catchError((_) {});
+  }
+
   @override
   Widget build(BuildContext context) {
     return StoreBuilder(builder: (context, store) {
+      _loadGaps(store);
       final user = store.currentUser!;
       final isAdmin = user.role == UserRole.admin;
       final days = (store.shifts.map((s) => s.date).toSet().toList()..sort());
       final pendingSwaps = store.swaps.where((s) => s.approved == null).toList();
       final mine = store.shiftsOf(user.id);
+      final cloud = store.remote?.hasShifts == true ? store.remote : null;
       return ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
@@ -55,8 +73,18 @@ class _ShiftsPageState extends State<ShiftsPage> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          TextButton(onPressed: () => store.decideSwap(swap.id, false), child: const Text('Rechazar')),
-                          FilledButton(onPressed: () => store.decideSwap(swap.id, true), child: const Text('Aprobar')),
+                          TextButton(
+                            onPressed: () => cloud == null
+                                ? store.decideSwap(swap.id, false)
+                                : runAsync(context, () => cloud.decideSwap(swap.id, false), success: 'Cambio de turno rechazado.'),
+                            child: const Text('Rechazar'),
+                          ),
+                          FilledButton(
+                            onPressed: () => cloud == null
+                                ? store.decideSwap(swap.id, true)
+                                : runAsync(context, () => cloud.decideSwap(swap.id, true), success: 'Cambio aprobado: ambos calendarios se actualizaron.'),
+                            child: const Text('Aprobar'),
+                          ),
                         ],
                       ),
                     ],
@@ -81,7 +109,12 @@ class _ShiftsPageState extends State<ShiftsPage> {
                         Icon(shift.area.icon, size: 18, color: kPrimaryDark),
                         const SizedBox(width: 6),
                         Expanded(child: Text('${shift.area.label} · ${shift.label} (${shift.hours})', style: const TextStyle(fontWeight: FontWeight.w800))),
-                        if (shift.hasCoverageGap) Pill(text: 'Faltan ${shift.minStaff - shift.staffIds.length}', color: kError),
+                        if (_gaps[shift.id]?.critical ?? false) ...[
+                          const Pill(text: 'Crítico', color: kError, icon: Icons.priority_high),
+                          const SizedBox(width: 4),
+                        ],
+                        if (shift.hasCoverageGap)
+                          Pill(text: 'Faltan ${_gaps[shift.id]?.missing ?? shift.minStaff - shift.staffIds.length}', color: kError),
                       ],
                     ),
                     const SizedBox(height: 6),
@@ -89,16 +122,17 @@ class _ShiftsPageState extends State<ShiftsPage> {
                       spacing: 6,
                       runSpacing: 6,
                       children: [
-                        for (final member in store.staffOf(shift.area.role))
-                          isAdmin
-                              ? FilterChip(
-                                  label: Text(member.firstName),
-                                  selected: shift.staffIds.contains(member.id),
-                                  onSelected: (_) => store.toggleShiftMember(shift.id, member.id),
-                                )
-                              : shift.staffIds.contains(member.id)
-                                  ? Chip(label: Text(member.firstName))
-                                  : const SizedBox.shrink(),
+                        if (isAdmin)
+                          for (final member in store.staffOf(shift.area.role))
+                            FilterChip(
+                              label: Text(member.firstName),
+                              selected: shift.staffIds.contains(member.id),
+                              onSelected: (_) => cloud == null
+                                  ? store.toggleShiftMember(shift.id, member.id)
+                                  : runAsync(context, () => cloud.toggleShiftMember(shift, member.id)),
+                            )
+                        else
+                          for (final id in shift.staffIds) Chip(label: Text(_name(store, shift, id).split(' ').first)),
                       ],
                     ),
                   ],
@@ -118,9 +152,13 @@ class _ShiftsPageState extends State<ShiftsPage> {
     return fmtDate(day);
   }
 
+  /// Colleagues are not in every role's store: the backend gives their names with the shift.
+  String _name(HotelStore store, Shift shift, int userId) => store.userById(userId)?.name ?? shift.staffNames[userId] ?? 'Colaborador';
+
   String _swapDetail(HotelStore store, ShiftSwap swap) {
-    final from = store.shifts.firstWhere((s) => s.id == swap.fromShiftId);
-    final to = store.shifts.firstWhere((s) => s.id == swap.toShiftId);
+    final from = store.shifts.where((s) => s.id == swap.fromShiftId).firstOrNull;
+    final to = store.shifts.where((s) => s.id == swap.toShiftId).firstOrNull;
+    if (from == null || to == null) return 'Turnos fuera de las próximas dos semanas';
     return '${_dayLabel(store, from.date)} ${from.label} por ${_dayLabel(store, to.date)} ${to.label}';
   }
 
@@ -143,7 +181,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
           for (final shift in options)
             for (final id in shift.staffIds)
               ListTile(
-                title: Text(store.userName(id)),
+                title: Text(_name(store, shift, id)),
                 subtitle: Text('${_dayLabel(store, shift.date)} · ${shift.label} · ${shift.hours}'),
                 onTap: () => Navigator.pop(sheetContext, (shift: shift, userId: id)),
               ),
@@ -151,6 +189,15 @@ class _ShiftsPageState extends State<ShiftsPage> {
       ),
     );
     if (choice == null || !context.mounted) return;
+    final cloud = store.remote?.hasShifts == true ? store.remote : null;
+    if (cloud != null) {
+      await runAsync(
+        context,
+        () => cloud.requestSwap(myShiftId: mine.id, colleagueUserId: choice.userId, colleagueShiftId: choice.shift.id),
+        success: 'Solicitud enviada al administrador.',
+      );
+      return;
+    }
     runAction(
       context,
       () => store.requestSwap(requesterId: user.id, fromShiftId: mine.id, targetUserId: choice.userId, toShiftId: choice.shift.id),
@@ -219,7 +266,23 @@ class _ShiftsPageState extends State<ShiftsPage> {
         ),
       ),
     );
-    if (saved != true) return;
+    if (saved != true || !context.mounted) return;
+    final cloud = store.remote?.hasShifts == true ? store.remote : null;
+    if (cloud != null) {
+      const periods = {'Mañana': 'Morning', 'Tarde': 'Afternoon', 'Noche': 'Night'};
+      await runAsync(
+        context,
+        () => cloud.createShift(
+          date: DateUtils.dateOnly(store.now).add(Duration(days: dayOffset)),
+          area: area,
+          period: periods[label]!,
+          minStaff: minStaff,
+          staffIds: selected.toList(),
+        ),
+        success: 'Turno creado.',
+      );
+      return;
+    }
     store.createShift(
       date: DateUtils.dateOnly(store.now).add(Duration(days: dayOffset)),
       area: area,

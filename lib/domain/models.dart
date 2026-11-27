@@ -234,6 +234,9 @@ class Room {
   int? roomTypeId;
   String typeName = '';
   double? price;
+
+  /// Hotel of the room in the backend; null on the demo data of this device.
+  int? hotelId;
   String description = '';
   List<String> amenities = const [];
 
@@ -440,6 +443,9 @@ class Stay {
 
   /// How to pay a pending booking (the hotel's Yape, Plin or bank account).
   Map<String, dynamic>? paymentInstructions;
+
+  /// Name of the hotel of the booking, as the backend calls it; null on the demo data of this device.
+  String? hotelName;
 
   Stay({
     required this.id,

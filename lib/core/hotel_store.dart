@@ -853,6 +853,9 @@ class HotelStore extends ChangeNotifier {
   // US-13 / US-14 / US-27 Stays
   // ---------------------------------------------------------------------------
 
+  /// Hotel of [stay]: the backend's name, or the demo hotel on this device. Null when the backend did not name it.
+  String? hotelNameOf(Stay? stay) => stay?.hotelName ?? (isRemote ? null : kHotelName);
+
   Stay? activeStayOf(int userId) {
     final mine = stays.where((s) => s.guestUserId == userId).toList()..sort((a, b) => b.checkIn.compareTo(a.checkIn));
     return mine.where((s) => s.isActive).firstOrNull ?? mine.firstOrNull;

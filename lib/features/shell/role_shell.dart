@@ -6,7 +6,6 @@ import '../../core/backend/api_client.dart';
 import '../../core/backend/remote_hotel.dart';
 import '../../core/hotel_store.dart';
 import '../../core/permissions.dart';
-import '../../core/seed.dart';
 import '../../core/session.dart';
 import '../../domain/models.dart';
 import '../../shared/ui.dart';
@@ -129,7 +128,7 @@ class _RoleShellState extends State<RoleShell> {
     final info = feature == null ? null : featureInfo[feature]!;
     final (title, subtitle) = switch (feature) {
       null => ('Más', 'Todo lo demás que puedes hacer.'),
-      Feature.guestHome => ('Hola, ${user.firstName}', 'Te damos la bienvenida a $kHotelName.'),
+      Feature.guestHome => ('Hola, ${user.firstName}', 'Te damos la bienvenida a ${_store.hotelNameOf(_store.activeStayOf(user.id)) ?? 'RoomTrack'}.'),
       _ => (info!.title, info.subtitle),
     };
 

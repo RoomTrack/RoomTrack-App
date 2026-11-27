@@ -262,6 +262,7 @@ class RemoteHotel {
     _preferencesLoaded = false;
     _conversationOf.clear();
     _loadedUpTo.clear();
+    _hotelNames.clear();
   }
 
   Future<String> signUpGuest({required String name, required String email, required String password}) async {
@@ -452,6 +453,9 @@ class RemoteHotel {
     }
 
     final activeBookings = bookings.where((b) => b['status'] != 'Cancelled').toList();
+    await _loadHotelNames({
+      for (final booking in activeBookings) store.rooms.where((r) => r.id == booking['roomId']).firstOrNull?.hotelId,
+    }.whereType<int>());
     final stays = <Stay>[];
     for (final booking in activeBookings) {
       final previous = store.stays.where((s) => s.id == booking['id']).firstOrNull;
@@ -695,6 +699,7 @@ class RemoteHotel {
       status: _roomStatus(data['status']?.toString() ?? 'Available'),
     )
       ..roomTypeId = data['roomTypeId'] as int?
+      ..hotelId = data['hotelId'] as int?
       ..typeName = data['roomTypeName']?.toString() ?? ''
       ..price = (data['price'] as num?)?.toDouble()
       ..description = data['description']?.toString() ?? ''
@@ -720,6 +725,20 @@ class RemoteHotel {
       }
     } on ApiException catch (e) {
       if (e.statusCode != 404) rethrow;
+    }
+  }
+
+  /// Names of the hotels of the bookings, asked once per hotel.
+  final Map<int, String> _hotelNames = {};
+
+  Future<void> _loadHotelNames(Iterable<int> hotelIds) async {
+    for (final id in hotelIds.where((id) => !_hotelNames.containsKey(id)).toSet()) {
+      try {
+        final name = (await api.get('/hotels/$id') as Map<String, dynamic>)['name']?.toString().trim() ?? '';
+        if (name.isNotEmpty) _hotelNames[id] = name;
+      } on ApiException {
+        // The stay then shows no hotel name.
+      }
     }
   }
 
@@ -749,6 +768,7 @@ class RemoteHotel {
       ..awaitingPayment = data['status'] == 'Pending'
       ..paymentDueAt = DateTime.tryParse(data['paymentDueAt']?.toString() ?? '')?.toLocal()
       ..paymentInstructions = (data['paymentInstructions'] as Map?)?.cast<String, dynamic>() ?? previous?.paymentInstructions
+      ..hotelName = _hotelNames[room?.hotelId] ?? previous?.hotelName
       ..accessCode = previous?.accessCode
       ..checkedInAt = DateTime.tryParse(data['checkedInAt']?.toString() ?? '')?.toLocal();
     final nights = (data['nights'] as num?)?.toInt() ?? stay.nights;

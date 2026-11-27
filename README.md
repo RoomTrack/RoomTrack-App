@@ -128,8 +128,13 @@ Las compilaciones release usan el backend de producción sin configuración extr
 flutter build apk --release
 ```
 
-- El backend corre en Azure Container Apps (Chile Central). El gateway y algunos servicios escalan a cero, así que la primera petición después de un rato sin uso tarda ~10–20 s.
+- El backend corre en Azure Container Apps (Chile Central). El gateway y varios servicios escalan a cero después de
+  un rato sin uso, y el gateway los despierta de uno en uno. Por eso el primer inicio de sesión puede tardar **1–2
+  minutos**; después va normal. Antes de una demo, abre la app un par de minutos antes.
 - En release el login no muestra los botones de cuentas de prueba.
+- Para probar contra producción en modo debug, con hot reload y los botones de cuentas, usa
+  `flutter run --dart-define=API_BASE_URL=https://gateway.bravepond-f06cc29c.chilecentral.azurecontainerapps.io/api/v1`.
+  Lo que hagas ahí queda guardado en la base real.
 - Para un release en modo demo: `flutter build apk --dart-define=API_BASE_URL=`.
 
 ### 1. Levantar el backend en local
@@ -172,7 +177,10 @@ En Android Studio: *Run → Edit Configurations → Additional run args*.
 - Las compilaciones de depuración permiten `http://` sin cifrar (`android/app/src/debug/AndroidManifest.xml`);
   la versión release exige HTTPS.
 
-### Cuentas del backend local
+### Cuentas demo
+
+Existen en el backend local, después de `tool/seed_backend.py`, y en producción, después de
+`deploy/azure/seed-demo.ps1` del backend. En debug, el login las muestra como botones.
 
 | Rol | Correo | Contraseña |
 |---|---|---|
@@ -188,7 +196,8 @@ En Android Studio: *Run → Edit Configurations → Additional run args*.
 - La primera vez que alguien del personal entra, la app muestra un **código QR** para Google Authenticator o
   Microsoft Authenticator y luego entrega los **códigos de recuperación**.
 - El administrador ya la tiene activada por el script: agrega a tu app autenticadora el `mfaSecret` de
-  `admin@roomtrack.pe` que está en `tool/demo_accounts.local.json`.
+  `admin@roomtrack.pe` que está en `tool/demo_accounts.local.json`. Cada backend (local o producción) tiene su
+  propio secreto: el archivo guarda el del último backend donde corriste el script.
 - Los huéspedes entran sin segundo factor.
 
 **Correos.** En local el backend no envía correos: los escribe en el log del worker de notificaciones

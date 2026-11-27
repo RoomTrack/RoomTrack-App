@@ -188,7 +188,7 @@ class _LoginPageState extends State<LoginPage> {
                     if (!backendEnabled || kDebugMode) ...[
                       const SizedBox(height: 18),
                       Text(
-                        backendEnabled ? 'Cuentas del backend local (tool/seed_backend.py)' : 'Cuentas de demostración (contraseña $kDemoPassword)',
+                        backendEnabled ? 'Cuentas demo' : 'Cuentas de demostración (contraseña $kDemoPassword)',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: kMuted, fontWeight: FontWeight.w700),
                       ),

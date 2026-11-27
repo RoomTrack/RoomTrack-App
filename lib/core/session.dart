@@ -2,6 +2,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../domain/models.dart';
 import 'backend/api_client.dart';
+import 'backend/remote_hotel.dart';
 import 'hotel_store.dart';
 
 /// Keeps the signed-in user across app restarts.
@@ -10,6 +11,7 @@ class SessionStore {
   static const String _userIdKey = 'user_id';
   static const String _accessKey = 'access_token';
   static const String _refreshKey = 'refresh_token';
+  static const String _hotelKey = 'chain_hotel_id';
 
   static Future<void> save(AppUser user) async {
     try {
@@ -19,8 +21,19 @@ class SessionStore {
     }
   }
 
-  /// Persists the backend tokens every time they change (sign-in, refresh, sign-out).
-  static void watch(ApiClient api) {
+  /// Persists the backend tokens every time they change (sign-in, refresh, sign-out), and the hotel a chain
+  /// administrator is working on.
+  static void watch(RemoteHotel remote) {
+    remote.onHotelChosen = (hotelId) async {
+      try {
+        if (hotelId == null) {
+          await _storage.delete(key: _hotelKey);
+        } else {
+          await _storage.write(key: _hotelKey, value: hotelId.toString());
+        }
+      } catch (_) {}
+    };
+    final ApiClient api = remote.api;
     api.onSessionChanged = (session) async {
       try {
         if (session == null) {
@@ -38,17 +51,19 @@ class SessionStore {
   static Future<AppUser?> restore(HotelStore store) async {
     final remote = store.remote;
     if (remote != null) {
-      watch(remote.api);
+      watch(remote);
       String? access;
       String? refresh;
+      String? hotel;
       try {
         access = await _storage.read(key: _accessKey);
         refresh = await _storage.read(key: _refreshKey);
+        hotel = await _storage.read(key: _hotelKey);
       } catch (_) {
         return null;
       }
       if (access == null) return null;
-      return remote.restore(ApiSession(access, refresh));
+      return remote.restore(ApiSession(access, refresh), hotelId: int.tryParse(hotel ?? ''));
     }
 
     String? raw;
@@ -71,6 +86,7 @@ class SessionStore {
       await _storage.delete(key: _userIdKey);
       await _storage.delete(key: _accessKey);
       await _storage.delete(key: _refreshKey);
+      await _storage.delete(key: _hotelKey);
     } catch (_) {}
   }
 }

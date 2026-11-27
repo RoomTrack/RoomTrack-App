@@ -116,6 +116,17 @@ class HotelPaymentSettings {
   }
 }
 
+/// A hotel of the chain, as the chain administrator picks it.
+class ChainHotel {
+  final int id;
+  final String name;
+  final String location;
+  final String imageUrl;
+  final bool acceptsBookings;
+
+  const ChainHotel(this.id, this.name, {this.location = '', this.imageUrl = '', this.acceptsBookings = false});
+}
+
 /// The RoomTrack backend seen from the app.
 ///
 /// It owns the session, copies what the backend knows (users, rooms, bookings, payments) into the
@@ -130,7 +141,23 @@ class RemoteHotel {
   /// The signed-in account as the backend describes it (hotel, role).
   Map<String, dynamic>? me;
 
-  int? get hotelId => me?['hotelId'] as int?;
+  /// The account's own hotel; for a chain administrator, the hotel they chose to work on.
+  int? get hotelId => (me?['hotelId'] as int?) ?? (isChainAdmin ? _chosenHotel?.id : null);
+
+  /// A chain administrator manages every hotel of the chain and picks the one to work on.
+  bool get isChainAdmin => me?['role'] == 'chain_admin';
+
+  /// An administrator without a hotel to work on: a hotel admin who has not registered theirs yet, or a chain
+  /// administrator who has not picked one.
+  bool get needsHotel => store.currentUser?.role == UserRole.admin && hotelId == null;
+
+  ChainHotel? _chosenHotel;
+
+  /// The hotel the chain administrator is working on.
+  ChainHotel? get chosenHotel => isChainAdmin ? _chosenHotel : null;
+
+  /// Called when the chain administrator picks a hotel or leaves it, so the choice survives a restart.
+  void Function(int? hotelId)? onHotelChosen;
 
   // ---------------------------------------------------------------------------
   // Session (US-01)
@@ -175,9 +202,11 @@ class RemoteHotel {
     return _loadCurrentUser();
   }
 
-  /// Resumes a saved session. Returns null when it is no longer valid.
-  Future<AppUser?> restore(ApiSession session) async {
+  /// Resumes a saved session. Returns null when it is no longer valid. [hotelId] is the hotel a chain administrator
+  /// was working on.
+  Future<AppUser?> restore(ApiSession session, {int? hotelId}) async {
     api.session = session;
+    if (hotelId != null) _chosenHotel = ChainHotel(hotelId, '');
     try {
       return await _loadCurrentUser();
     } on ApiException {
@@ -187,7 +216,22 @@ class RemoteHotel {
   }
 
   Future<AppUser> _loadCurrentUser() async {
+    api.scopeHotelId = null;
     me = await api.get('/users/me') as Map<String, dynamic>;
+    if (!isChainAdmin) _chosenHotel = null;
+    api.scopeHotelId = chosenHotel?.id;
+    if (chosenHotel case final chosen? when chosen.name.isEmpty) {
+      try {
+        final data = await api.get('/hotels/${chosen.id}') as Map<String, dynamic>;
+        _chosenHotel = ChainHotel(chosen.id, data['name']?.toString() ?? '');
+      } on ApiException catch (e) {
+        // The hotel was deleted meanwhile: the chain administrator picks another one.
+        if (e.statusCode != 404) rethrow;
+        _chosenHotel = null;
+        api.scopeHotelId = null;
+        onHotelChosen?.call(null);
+      }
+    }
     final user = _user(me!);
     _upsertUser(user);
     store.currentUser = user;
@@ -212,6 +256,9 @@ class RemoteHotel {
   /// What was copied for the account that signed out.
   void _forgetSession() {
     me = null;
+    _chosenHotel = null;
+    api.scopeHotelId = null;
+    onHotelChosen?.call(null);
     _preferencesLoaded = false;
     _conversationOf.clear();
     _loadedUpTo.clear();
@@ -315,8 +362,73 @@ class RemoteHotel {
     return role == UserRole.admin || role == UserRole.reception || role == UserRole.guest;
   }
 
+  // ---------------------------------------------------------------------------
+  // Hotels of the chain
+  // ---------------------------------------------------------------------------
+
+  /// Every hotel of the chain (`GET /hotels`).
+  Future<List<ChainHotel>> chainHotels() async => [
+        for (final data in (await api.get('/hotels') as List).cast<Map<String, dynamic>>())
+          ChainHotel(data['id'] as int, data['name']?.toString() ?? '', location: data['location']?.toString() ?? '',
+              imageUrl: data['imageUrl']?.toString() ?? '', acceptsBookings: data['acceptsBookings'] == true),
+      ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+  /// Registers a hotel (`POST /hotels`). A hotel admin registers only their own, which becomes their hotel: the
+  /// backend revokes their session and hands a new one carrying it. A chain administrator registers any number and
+  /// starts working on the new one.
+  Future<void> createHotel(Map<String, dynamic> hotel) async {
+    final data = await api.post('/hotels', hotel) as Map<String, dynamic>;
+    final created = data['hotel'] as Map<String, dynamic>;
+    if (data['session'] case final Map<String, dynamic> session) {
+      api.setSession(ApiSession(session['token'] as String, session['refreshToken'] as String? ?? api.session?.refreshToken));
+      _clearHotelData();
+      await _loadCurrentUser();
+      return;
+    }
+    await chooseHotel(ChainHotel(created['id'] as int, created['name']?.toString() ?? ''));
+  }
+
+  /// The chain administrator starts working on [hotel].
+  Future<void> chooseHotel(ChainHotel hotel) async {
+    _chosenHotel = hotel;
+    api.scopeHotelId = hotel.id;
+    onHotelChosen?.call(hotel.id);
+    _clearHotelData();
+    await sync();
+  }
+
+  /// The chain administrator goes back to the list of hotels.
+  void leaveHotel() {
+    _chosenHotel = null;
+    api.scopeHotelId = null;
+    onHotelChosen?.call(null);
+    _clearHotelData();
+    store.refresh();
+  }
+
+  /// Drops what was copied from the previous hotel, so nothing of it shows on the next one.
+  void _clearHotelData() {
+    final current = store.currentUser;
+    store.users.removeWhere((u) => u.id != current?.id);
+    for (final list in <List>[
+      store.rooms, store.tasks, store.incidents, store.requests, store.stays, store.payments, store.receipts,
+      store.alerts, store.messages, store.ratings, store.preventiveTasks, store.shifts, store.swaps, store.handovers,
+      store.schedules,
+    ]) {
+      list.clear();
+    }
+    dashboard = null;
+    _conversationOf.clear();
+    _loadedUpTo.clear();
+  }
+
   /// Copies users, rooms, bookings and payments from the backend into the store.
   Future<void> sync() async {
+    // Without a hotel there is nothing to copy: the administrator first registers or picks one.
+    if (needsHotel) {
+      store.refresh();
+      return;
+    }
     final rooms = (await api.get('/rooms') as List).cast<Map<String, dynamic>>();
     final bookings = (await api.get('/bookings') as List).cast<Map<String, dynamic>>();
     final users = _isAdmin ? (await api.get('/users') as List).cast<Map<String, dynamic>>() : const <Map<String, dynamic>>[];

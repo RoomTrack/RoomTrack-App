@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/backend/api_client.dart';
+import '../../core/backend/remote_hotel.dart';
 import '../../core/hotel_store.dart';
 import '../../core/permissions.dart';
 import '../../core/seed.dart';
 import '../../core/session.dart';
 import '../../domain/models.dart';
 import '../../shared/ui.dart';
+import '../admin/hotel_gate_page.dart';
 import '../auth/login_page.dart';
 import 'feature_registry.dart';
 
@@ -25,6 +27,8 @@ class _RoleShellState extends State<RoleShell> {
   int _index = 0;
   int _lastNotificationId = 0;
   UserRole? _role;
+  bool _needsHotel = false;
+  int? _hotelId;
   bool _leaving = false;
   Timer? _sync;
 
@@ -34,6 +38,8 @@ class _RoleShellState extends State<RoleShell> {
     final user = _store.currentUser;
     if (user != null) {
       _role = user.role;
+      _needsHotel = _store.remote?.needsHotel ?? false;
+      _hotelId = _store.remote?.hotelId;
       final mine = _store.notificationsFor(user.id);
       _lastNotificationId = mine.isEmpty ? 0 : mine.map((n) => n.id).reduce((a, b) => a > b ? a : b);
     }
@@ -68,10 +74,14 @@ class _RoleShellState extends State<RoleShell> {
       _signOut();
       return;
     }
-    if (user.role != _role) {
-      // A role change adjusts the permissions on the spot.
+    final needsHotel = _store.remote?.needsHotel ?? false;
+    final hotelId = _store.remote?.hotelId;
+    if (user.role != _role || needsHotel != _needsHotel || hotelId != _hotelId) {
+      // A role change adjusts the permissions on the spot; a new hotel starts again from the first tab.
       setState(() {
         _role = user.role;
+        _needsHotel = needsHotel;
+        _hotelId = hotelId;
         _index = 0;
       });
     }
@@ -108,6 +118,8 @@ class _RoleShellState extends State<RoleShell> {
   Widget build(BuildContext context) {
     final user = _store.currentUser;
     if (user == null) return const Scaffold(body: LoadingView());
+    if (_store.remote?.needsHotel ?? false) return const HotelGatePage();
+    final chosenHotel = _store.remote?.chosenHotel;
     final tabs = roleTabs[user.role]!;
     final hasMore = user.role != UserRole.guest;
     final pageCount = tabs.length + (hasMore ? 1 : 0);
@@ -135,6 +147,7 @@ class _RoleShellState extends State<RoleShell> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (chosenHotel != null) _ChainHotelBar(hotel: chosenHotel),
           const SizedBox(height: 16),
           PageHeader(title: title, subtitle: subtitle),
           Expanded(
@@ -151,6 +164,38 @@ class _RoleShellState extends State<RoleShell> {
           destinations: [
             for (final f in tabs) NavigationDestination(icon: Icon(featureInfo[f]!.icon), label: featureInfo[f]!.title),
             if (hasMore) const NavigationDestination(icon: Icon(Icons.menu), label: 'Más'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The hotel a chain administrator is working on, with the way back to the hotels of the chain.
+class _ChainHotelBar extends StatelessWidget {
+  final ChainHotel hotel;
+
+  const _ChainHotelBar({required this.hotel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: kPrimary.withValues(alpha: 0.08),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 8, 4),
+        child: Row(
+          children: [
+            const Icon(Icons.apartment_outlined, size: 20, color: kPrimaryDark),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(hotel.name.isEmpty ? 'Hotel ${hotel.id}' : hotel.name,
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            TextButton.icon(
+              onPressed: () => HotelStore.instance.remote!.leaveHotel(),
+              icon: const Icon(Icons.swap_horiz),
+              label: const Text('Cambiar de hotel'),
+            ),
           ],
         ),
       ),

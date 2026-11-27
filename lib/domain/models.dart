@@ -585,6 +585,9 @@ class ChatMessage {
 
 class Rating {
   final int stayId;
+
+  /// The stay as a whole, 1-5 (the backend asks for it; null for the evaluations of the demo).
+  final int? overall;
   final Map<Area, int> scores;
   final String comment;
   final DateTime createdAt;
@@ -594,6 +597,7 @@ class Rating {
 
   const Rating({
     required this.stayId,
+    this.overall,
     required this.scores,
     required this.comment,
     required this.createdAt,
@@ -610,6 +614,11 @@ class ServiceItem {
   final IconData icon;
   bool available;
 
+  /// How long the service takes, in minutes, when the hotel says it (US-33); otherwise the time of its area.
+  final int? etaMinutes;
+
+  int get minutes => etaMinutes ?? area.etaMinutes;
+
   ServiceItem({
     required this.id,
     required this.name,
@@ -618,6 +627,7 @@ class ServiceItem {
     required this.area,
     required this.icon,
     this.available = true,
+    this.etaMinutes,
   });
 }
 

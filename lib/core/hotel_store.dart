@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart' show DateUtils;
+import 'package:flutter/material.dart' show DateUtils, IconData;
 
 import '../domain/models.dart';
 import 'backend/api_client.dart';
@@ -747,6 +747,40 @@ class HotelStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// US-33: the administrator adds a service to the catalog ([existing] null) or changes one.
+  ServiceItem saveService({ServiceItem? existing, required String name, String description = '', required Area area,
+      required double price, int? etaMinutes, bool available = true, IconData? icon}) {
+    final text = name.trim();
+    if (text.length < 3 || text.length > 80) throw const DomainException('El nombre del servicio debe tener de 3 a 80 caracteres.');
+    if (price < 0 || price > 99999.99) throw const DomainException('El precio va de 0 (incluido) a 99 999.99.');
+    if (etaMinutes != null && (etaMinutes < 1 || etaMinutes > 1440)) {
+      throw const DomainException('El tiempo estimado va de 1 a 1440 minutos.');
+    }
+    final item = ServiceItem(
+      id: existing?.id ?? nextId(),
+      name: text,
+      description: description.trim(),
+      price: price,
+      area: area,
+      icon: icon ?? existing?.icon ?? area.icon,
+      available: available,
+      etaMinutes: etaMinutes,
+    );
+    final index = services.indexWhere((s) => s.id == item.id);
+    if (index >= 0) {
+      services[index] = item;
+    } else {
+      services.add(item);
+    }
+    notifyListeners();
+    return item;
+  }
+
+  void deleteService(int id) {
+    services.removeWhere((s) => s.id == id);
+    notifyListeners();
+  }
+
   List<GuestRequest> requestsForStay(int stayId) =>
       requests.where((r) => r.stayId == stayId).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
@@ -1162,7 +1196,8 @@ class HotelStore extends ChangeNotifier {
   // US-21 / US-26 Ratings
   // ---------------------------------------------------------------------------
 
-  void submitRating(int stayId, {required int cleaning, required int attention, required int maintenance, String comment = ''}) {
+  void submitRating(int stayId,
+      {required int cleaning, required int attention, required int maintenance, int? overall, String comment = ''}) {
     final stay = stayById(stayId);
     if (stay.status != StayStatus.checkedOut) throw const DomainException('Podrás calificar al finalizar tu estancia.');
     if (stay.rated) throw const DomainException('Ya calificaste esta estancia. ¡Gracias!');
@@ -1171,6 +1206,7 @@ class HotelStore extends ChangeNotifier {
     bool during(DateTime? at) => at != null && !at.isBefore(start) && !at.isAfter(end.add(const Duration(hours: 4)));
     ratings.add(Rating(
       stayId: stayId,
+      overall: overall,
       scores: {Area.housekeeping: cleaning, Area.reception: attention, Area.maintenance: maintenance},
       comment: comment.trim(),
       createdAt: now,

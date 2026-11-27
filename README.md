@@ -40,6 +40,7 @@ rol, y lo demás que el rol puede hacer está en **Más**. Si alguien intenta ab
 - **Personal**: alta, cambio de rol y desactivación de cuentas (US-03).
 - **Analítica**: productividad por colaborador, comparación entre áreas, tiempos de limpieza y de resolución,
   tendencia semanal, satisfacción por área y exportación a Excel (CSV) (US-24 a US-26).
+- **Catálogo de servicios**: lo que los huéspedes pueden pedir, con precio, área y tiempo estimado (US-33).
 - **Alertas automáticas** por demoras e incidencias críticas, con historial (US-23).
 - **Reportes programados** por correo (US-34), **turnos** con detección de huecos de cobertura y cambios de turno
   (US-31).
@@ -221,6 +222,7 @@ lib/
     backend/
       api_client.dart       HTTP al gateway, renovación del token, errores traducidos al español
       remote_hotel.dart     Login con MFA, sincronización backend → store y acciones del backend
+      remote_reports.dart   Panel, catálogo, evaluaciones, reportes y envíos programados (Sprint 4)
   domain/
     models.dart             Modelos: usuarios, habitaciones, tareas, incidencias, estancias, pagos...
   features/                 Una carpeta por área; cada pantalla escucha el store
@@ -261,6 +263,7 @@ flutter test
 | `test/screens_smoke_test.dart` | Abre todas las pantallas de todos los roles y falla ante cualquier error de diseño |
 | `test/widget_test.dart` | Login por rol y error genérico de credenciales |
 | `test/backend/remote_hotel_test.dart` | Mapeo backend → app con un servidor simulado (sin red) |
+| `test/backend/remote_reports_test.dart` | Panel, catálogo, evaluaciones, reportes y envíos programados del Sprint 4 con el servidor simulado |
 | `test/backend/remote_hotel_live_test.dart` | Flujo real contra el backend local; se omite sin `API_BASE_URL` |
 
 Para correr la prueba contra el backend (después de `tool/seed_backend.py`):
@@ -275,11 +278,16 @@ flutter test test/backend/remote_hotel_live_test.dart --dart-define=API_BASE_URL
 
 | Ya usa el backend | Todavía solo en la app |
 |---|---|
-| Login, MFA, verificación de correo, recuperación y cambio de contraseña | Catálogo de servicios (la solicitud sí va al backend) |
-| Habitaciones, cambio de estado (solo transiciones permitidas), historial y mantenimiento vencido | Extensión de una estadía en curso (el backend solo cambia reservas sin check-in) |
-| Datos del hotel con su foto, tipos de habitación y alta/edición/baja de habitaciones | Evaluación de la estancia y analítica detallada |
-| Alta, rol y desactivación del personal, ficha de RR. HH. y sus asignaciones | Reportes programados |
-| Auditoría de accesos y cambios de las cuentas | Notificaciones push en el dispositivo (falta Firebase en la app) |
+| Login, MFA, verificación de correo, recuperación y cambio de contraseña | Extensión de una estadía en curso (el backend solo cambia reservas sin check-in) |
+| Habitaciones, cambio de estado (solo transiciones permitidas), historial y mantenimiento vencido | Notificaciones push en el dispositivo (falta Firebase en la app) |
+| Datos del hotel con su foto, tipos de habitación y alta/edición/baja de habitaciones | Tendencia semanal de la analítica (se calcula con las tareas sincronizadas) |
+| Alta, rol y desactivación del personal, ficha de RR. HH. y sus asignaciones | |
+| Auditoría de accesos y cambios de las cuentas | |
+| Panel del administrador: contadores, recepción del día, últimas evaluaciones y lo que requiere atención (US-18) | |
+| Catálogo de servicios del hotel, su administración y pedidos con precio (US-33) | |
+| Evaluación de la estancia y satisfacción por área (US-21, US-26) | |
+| Productividad del personal, tiempos de atención y exportación CSV desde el servidor (US-24, US-25, US-34) | |
+| Envío programado de reportes por correo, semanal o mensual, y envío inmediato (US-34) | |
 | Reservas, disponibilidad por fechas, cambio de fechas o habitación, pagos y cancelación | |
 | Check-in digital del huésped y check-in en recepción con alternativas si la habitación no está lista | |
 | Ficha del huésped: contacto, documento, corrección y desactivación | |

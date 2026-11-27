@@ -467,8 +467,8 @@ const List<String> _incidentTitles = [
   'Silla dañada',
 ];
 
-/// The eight service categories of the "Servicios" mockup. The backend has no catalog yet, so the app always
-/// brings it.
+/// The eight service categories of the "Servicios" mockup: the catalog of the demo, and of a backend that has no
+/// catalog yet (with one, the sync replaces it with the hotel's, US-33).
 void seedCatalog(HotelStore store) {
   ServiceItem service(String name, String description, double price, Area area, IconData icon) =>
       ServiceItem(id: store.nextId(), name: name, description: description, price: price, area: area, icon: icon);

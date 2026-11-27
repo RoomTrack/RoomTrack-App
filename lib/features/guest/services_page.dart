@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/backend/remote_reports.dart';
 import '../../core/hotel_store.dart';
 import '../../domain/models.dart';
 import '../../shared/format.dart';
@@ -42,7 +43,11 @@ class _ServicesPageState extends State<ServicesPage> {
             ),
           ),
           const SizedBox(height: 16),
-          if (services.isEmpty) const EmptyState(icon: Icons.search_off, message: 'No encontramos ese servicio.'),
+          if (services.isEmpty)
+            EmptyState(
+              icon: Icons.search_off,
+              message: store.services.isEmpty ? 'El hotel aún no publicó su catálogo de servicios.' : 'No encontramos ese servicio.',
+            ),
           GridView.count(
             crossAxisCount: 2,
             shrinkWrap: true,
@@ -121,7 +126,7 @@ class _ServicesPageState extends State<ServicesPage> {
               children: [
                 Pill(text: service.price == 0 ? 'Sin costo' : '${money(service.price)} a tu cuenta', color: kPrimary),
                 Pill(text: service.available ? 'Disponible' : 'No disponible', color: service.available ? kSuccess : kMuted),
-                Pill(text: 'Atiende ${service.area.label} · ~${service.area.etaMinutes} min', color: kGold),
+                Pill(text: 'Atiende ${service.area.label} · ~${service.minutes} min', color: kGold),
               ],
             ),
             if (!canOrder && service.available) ...[
@@ -140,19 +145,17 @@ class _ServicesPageState extends State<ServicesPage> {
     );
     if (order != true || !context.mounted || stay == null) return;
     final remote = store.remote;
-    if (remote != null && remote.hasGuestRequests) {
-      await runAsync(
-        context,
-        () => remote.requestService(service),
-        success: 'Solicitud enviada a ${service.area.label}. Tiempo estimado: ${service.area.etaMinutes} min.',
-      );
+    final success = 'Solicitud enviada a ${service.area.label}. Tiempo estimado: ${service.minutes} min.';
+    if (remote != null && remote.hasServiceCatalog) {
+      // US-33: the backend sends it to the area of the service and keeps its price.
+      await runAsync(context, () => remote.requestCatalogService(service), success: success);
       return;
     }
-    runAction(
-      context,
-      () => store.requestService(stay.id, service.id),
-      success: 'Solicitud enviada a ${service.area.label}. Tiempo estimado: ${service.area.etaMinutes} min.',
-    );
+    if (remote != null && remote.hasGuestRequests) {
+      await runAsync(context, () => remote.requestService(service), success: success);
+      return;
+    }
+    runAction(context, () => store.requestService(stay.id, service.id), success: success);
   }
 }
 

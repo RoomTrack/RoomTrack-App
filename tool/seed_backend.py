@@ -75,6 +75,19 @@ class ApiError(Exception):
         self.retry_after = retry_after
 
 
+# The catalog of the "Servicios" mockup: name, description, area, price, estimated minutes.
+SERVICES = [
+    ("Limpieza", "Limpieza de la habitación cuando lo prefieras.", 1, 0, 45),
+    ("Toallas extra", "Juego adicional de toallas de baño.", 1, 0, 15),
+    ("Amenidades", "Shampoo, jabón, kit dental y más.", 1, 0, 15),
+    ("Lavandería", "Lavado y planchado, entrega en 24 horas.", 1, 25, None),
+    ("Comida y bebida", "Desayuno o snacks servidos en tu habitación.", 0, 35, 30),
+    ("Reportar un problema", "Aire, luces, TV o cualquier desperfecto.", 2, 0, 60),
+    ("Salida tardía", "Check-out hasta las 3:00 p. m., sujeto a disponibilidad.", 0, 40, 10),
+    ("Conserjería", "Reservas, taxis y recomendaciones de la ciudad.", 0, 0, 15),
+]
+
+
 def call(method, path, body=None, token=None):
     """JSON request through the gateway. Waits and retries when the rate limiter answers 429."""
     for attempt in range(8):
@@ -277,6 +290,23 @@ def main():
             "description": f"Habitación {number} · {type_name}", "amenities": ["Wifi", "TV"],
         }, token=admin_token)
     print(f"  {len(existing_rooms)} habitaciones")
+
+    # US-33: the catalog the guests order from (area: 0 front desk, 1 housekeeping, 2 maintenance).
+    print("Catálogo de servicios")
+    try:
+        existing_services = {s["name"] for s in call("GET", f"/service-catalog?hotelId={hotel_id}", token=admin_token)}
+    except ApiError as error:
+        existing_services = None
+        print(f"  (el backend no tiene catálogo: {error.status})")
+    if existing_services is not None:
+        for name, description, area, price, minutes in SERVICES:
+            if name in existing_services:
+                continue
+            call("POST", f"/service-catalog?hotelId={hotel_id}", {
+                "name": name, "description": description, "area": area, "price": price, "estimatedMinutes": minutes,
+            }, token=admin_token)
+            print(f"  + {name}")
+        print(f"  {len(existing_services | {s[0] for s in SERVICES})} servicios")
 
     print("Personal")
     for user in STAFF[1:]:

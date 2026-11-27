@@ -64,6 +64,18 @@ class ApiClient {
 
   Future<dynamic> get(String path) => _send('GET', path);
 
+  /// A text download (a CSV report): the body as it comes, or the backend's problem as an [ApiException].
+  Future<String> getText(String path) async {
+    Future<http.Response> send() => _client
+        .send(http.Request('GET', _uri(path))..headers.addAll({..._headers(json: false), 'Accept': 'text/csv, */*'}))
+        .then(http.Response.fromStream);
+
+    var response = await _guard(send);
+    if (response.statusCode == 401 && await _tryRefresh()) response = await _guard(send);
+    if (response.statusCode >= 200 && response.statusCode < 300) return utf8.decode(response.bodyBytes);
+    throw problem(response.statusCode, response.body);
+  }
+
   Future<dynamic> post(String path, [Object? body, String? bearer]) => _send('POST', path, body: body, bearer: bearer);
 
   Future<dynamic> put(String path, Object? body) => _send('PUT', path, body: body);
@@ -261,6 +273,24 @@ class ApiClient {
     'guest_request.note_length': 'La nota no puede pasar de 500 caracteres.',
     'guest_request.room_required': 'Indica la habitación de la solicitud.',
     'guest_request.title_length': 'Describe la solicitud en 3 a 120 caracteres.',
+    'service_catalog.not_available': 'Este servicio no está disponible por ahora.',
+    'service_catalog.other_hotel': 'Ese servicio no es del catálogo de tu hotel.',
+    'service_catalog.hotel_required': 'Necesitas una estadía en curso para ver los servicios del hotel.',
+    'service_catalog.name_length': 'El nombre del servicio debe tener de 3 a 80 caracteres.',
+    'service_catalog.description_length': 'La descripción no puede pasar de 500 caracteres.',
+    'service_catalog.price_invalid': 'El precio va de 0 (incluido) a 99 999.99, con hasta 2 decimales.',
+    'service_catalog.estimated_minutes_invalid': 'El tiempo estimado va de 1 a 1440 minutos.',
+    'stay_review.stay_not_finished': 'Podrás evaluar tu estancia después del check-out.',
+    'stay_review.window_closed': 'El plazo para evaluar esta estancia (30 días) ya terminó.',
+    'stay_review.already_submitted': 'Ya evaluaste esta estancia. ¡Gracias!',
+    'stay_review.rating_out_of_range': 'Cada calificación va de 1 a 5 estrellas.',
+    'stay_review.comment_too_long': 'El comentario no puede pasar de 1000 caracteres.',
+    'stay_review.period_invalid': 'Revisa el rango de fechas (máximo 366 días).',
+    'staff_performance.invalid_period': 'Revisa el rango de fechas (máximo 366 días).',
+    'report_schedule.recipients_required': 'Agrega al menos un destinatario.',
+    'report_schedule.too_many_recipients': 'Un envío programado tiene como máximo 10 destinatarios.',
+    'report_schedule.recipient_invalid': 'Hay un correo de destinatario que no es válido.',
+    'report_schedule.no_report_selected': 'Elige al menos un reporte para enviar.',
     'conversation.access_denied': 'No participas en esta conversación.',
     'conversation.no_current_stay': 'Necesitas una estadía en curso para escribir a recepción.',
     'conversation.not_an_area': 'Esa área no tiene canal de mensajes.',

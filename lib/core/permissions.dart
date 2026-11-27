@@ -29,6 +29,7 @@ enum Feature {
   notifications,
   hotelSetup,
   auditLog,
+  serviceCatalog,
 }
 
 /// Screens that only exist with the backend (the demo data has no hotel record nor audit log).
@@ -62,6 +63,7 @@ const Map<UserRole, Set<Feature>> _access = {
     Feature.reportSchedules,
     Feature.hotelSetup,
     Feature.auditLog,
+    Feature.serviceCatalog,
   },
   UserRole.reception: {
     ..._staffCommon,

@@ -6,6 +6,7 @@ import '../../domain/models.dart';
 import '../admin/audit_log_page.dart';
 import '../admin/hotel_setup_page.dart';
 import '../alerts/alerts_page.dart';
+import '../admin/service_catalog_page.dart';
 import '../analytics/analytics_page.dart';
 import '../analytics/report_schedules_page.dart';
 import '../dashboard/admin_dashboard_page.dart';
@@ -67,6 +68,8 @@ final Map<Feature, FeatureInfo> featureInfo = {
   Feature.notifications: FeatureInfo('Notificaciones', Icons.notifications_outlined, () => const NotificationsPage()),
   Feature.hotelSetup: FeatureInfo('Hotel y habitaciones', Icons.apartment_outlined, () => const HotelSetupPage(), 'Datos del hotel, habitaciones y protocolos de limpieza.'),
   Feature.auditLog: FeatureInfo('Auditoría', Icons.policy_outlined, () => const AuditLogPage(), 'Accesos y cambios de las cuentas del hotel.'),
+  Feature.serviceCatalog: FeatureInfo('Catálogo de servicios', Icons.room_service_outlined, () => const ServiceCatalogPage(),
+      'Lo que tus huéspedes pueden pedir, con precio y tiempo.'),
 };
 
 /// Bottom navigation per role; whatever else the role can reach lives under "Más".

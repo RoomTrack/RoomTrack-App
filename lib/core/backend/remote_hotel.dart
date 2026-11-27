@@ -5,6 +5,7 @@ import 'package:flutter/material.dart' show DateUtils;
 import '../../domain/models.dart';
 import '../hotel_store.dart';
 import 'api_client.dart';
+import 'remote_reports.dart';
 
 /// Accounts created by `tool/seed_backend.py` in a local backend.
 const String kRemoteStaffPassword = 'RoomTrack-Staff-2026!';
@@ -297,6 +298,18 @@ class RemoteHotel {
   /// The backend has the shift handovers (US-32).
   bool hasHandovers = false;
 
+  /// The backend has the service catalog of the hotel (US-33): the screens use it instead of the demo catalog.
+  bool hasServiceCatalog = false;
+
+  /// The backend keeps the evaluations of the stays (US-21, US-26).
+  bool hasStayReviews = false;
+
+  /// The backend sends the staff reports by e-mail on a schedule (US-34).
+  bool hasReportSchedules = false;
+
+  /// The administrator's panel as the backend calculated it in the last sync (US-18); null without it.
+  DashboardSnapshot? dashboard;
+
   bool get _seesPayments {
     final role = store.currentUser?.role;
     return role == UserRole.admin || role == UserRole.reception || role == UserRole.guest;
@@ -487,6 +500,9 @@ class RemoteHotel {
         }
       }
     }
+
+    // Sprint 4: catalog, evaluations, scheduled reports and the administrator's panel.
+    await syncReports();
     store.refresh();
   }
 
@@ -1024,6 +1040,9 @@ class RemoteHotel {
   }
 
   Future<void> _requestAction(Future<dynamic> Function() call) async => _upsertRequest(await call() as Map<String, dynamic>);
+
+  /// Keeps a request as the backend answered it (used by the other backend modules).
+  void upsertRequest(Map<String, dynamic> data) => _upsertRequest(data);
 
   /// The front desk registers a request for a room and the area that attends it. A guest sends it for the room of
   /// their stay: without [area] it reaches the front desk, which routes it.

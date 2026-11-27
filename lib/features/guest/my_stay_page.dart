@@ -280,7 +280,7 @@ class StayHeroCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(kHotelName, style: TextStyle(fontFamily: kSerif, fontSize: 21, color: kSecondary)),
+                Text(store.hotelNameOf(stay) ?? 'Tu estancia', style: const TextStyle(fontFamily: kSerif, fontSize: 21, color: kSecondary)),
                 const SizedBox(height: 10),
                 Row(
                   children: [

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../core/backend/api_client.dart';
+import '../../core/backend/sandbox_card_gateway.dart';
 import '../../core/hotel_store.dart';
 import '../../core/seed.dart';
 import '../../domain/models.dart';
@@ -625,7 +627,9 @@ class _Step extends StatelessWidget {
   }
 }
 
-/// Digital check-in against the backend (US-13): pay first, then identity document and its photo.
+/// Digital check-in against the backend (US-13): pay first (by card here, US-15, or with the hotel's methods), then
+/// identity document and its photo. Done before the arrival day it stays "check-in en proceso" until the guest, at the
+/// hotel, confirms their identity with the document number.
 class _RemoteCheckIn extends StatefulWidget {
   final Stay stay;
   final HotelStore store;
@@ -642,6 +646,7 @@ class _RemoteCheckInState extends State<_RemoteCheckIn> {
   String _documentType = 'DNI';
   XFile? _photo;
   bool _sending = false;
+  String? _waitMessage;
 
   @override
   void dispose() {
@@ -655,22 +660,69 @@ class _RemoteCheckInState extends State<_RemoteCheckIn> {
     if (photo != null && mounted) setState(() => _photo = photo);
   }
 
+  /// US-15: card payment through the (sandbox) card gateway; a declined card keeps the sheet open.
+  Future<void> _payByCard() async {
+    final paid = await showPaymentSheet(
+      context,
+      title: 'Pago de tu reserva',
+      amount: widget.store.balanceOf(widget.stay),
+      onPay: (parts) => widget.store.remote!.payBookingByCard(widget.stay.id, SandboxCardGateway.tokenize(parts.first.card!)),
+    );
+    if (paid && mounted) showAppSnack(context, 'Pago aprobado. Tu check-in digital ya está habilitado.');
+  }
+
+  /// US-13: at the hotel, the guest who checked in before arriving confirms their identity.
+  Future<void> _confirmArrival() async {
+    final number = await askText(context, title: 'Confirma tu identidad', label: 'Número del documento que enviaste');
+    if (number == null || !mounted) return;
+    setState(() => _sending = true);
+    try {
+      await widget.store.remote!.confirmArrival(widget.stay.id, number);
+      if (mounted) showAppSnack(context, '¡Te damos la bienvenida! Tu código de acceso está en "Llave digital".');
+    } on DomainException catch (e) {
+      _showError(e);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// A room not ready stays on screen with the estimated wait; any other error is a snack.
+  void _showError(DomainException e) {
+    if (!mounted) return;
+    if (e is ApiException && e.code == 'check_in.room_not_ready') {
+      setState(() => _waitMessage = e.message);
+    } else {
+      showAppSnack(context, e.message, error: true);
+    }
+  }
+
   Future<void> _send() async {
     final photo = _photo;
     if (photo == null) {
       showAppSnack(context, 'Agrega una foto de tu documento.', error: true);
       return;
     }
-    setState(() => _sending = true);
+    setState(() {
+      _sending = true;
+      _waitMessage = null;
+    });
     final bytes = await photo.readAsBytes();
     if (!mounted) return;
-    await runAsync(
-      context,
-      () => widget.store.remote!.completeCheckIn(widget.stay.id,
-          documentType: _documentType, documentNumber: _number.text, nationality: _nationality.text, document: bytes, fileName: photo.name),
-      success: '¡Check-in completado! Tu código de acceso está en "Llave digital".',
-    );
-    if (mounted) setState(() => _sending = false);
+    try {
+      final code = await widget.store.remote!.completeCheckIn(widget.stay.id,
+          documentType: _documentType, documentNumber: _number.text, nationality: _nationality.text, document: bytes, fileName: photo.name);
+      if (!mounted) return;
+      showAppSnack(
+        context,
+        code == null
+            ? 'Tu check-in quedó en proceso. Al llegar al hotel confirma tu identidad para recibir tu código.'
+            : '¡Check-in completado! Tu código de acceso está en "Llave digital".',
+      );
+    } on DomainException catch (e) {
+      _showError(e);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   Future<void> _askForHelp() async {
@@ -684,6 +736,8 @@ class _RemoteCheckInState extends State<_RemoteCheckIn> {
   Widget build(BuildContext context) {
     final stay = widget.stay;
     final instructions = stay.paymentInstructions;
+    // From the check-in day on, the guest is (or can be) at the hotel.
+    final arrived = !DateUtils.dateOnly(stay.checkIn).isAfter(DateUtils.dateOnly(widget.store.now));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -691,8 +745,13 @@ class _RemoteCheckInState extends State<_RemoteCheckIn> {
         const SizedBox(height: 20),
         if (stay.awaitingPayment) ...[
           const Text('Paga tu reserva', style: TextStyle(fontFamily: kSerif, fontSize: 22)),
-          const Text('Cuando el hotel registre tu pago podrás hacer el check-in desde aquí.', style: TextStyle(color: kMuted)),
-          const SizedBox(height: 8),
+          const Text('Paga con tarjeta aquí o con los medios del hotel; con el pago se habilita tu check-in digital.',
+              style: TextStyle(color: kMuted)),
+          const SizedBox(height: 12),
+          AppButton(text: 'Pagar con tarjeta ${money(widget.store.balanceOf(stay))}', icon: Icons.credit_card, dark: true, onPressed: _payByCard),
+          const SizedBox(height: 12),
+          const Text('O paga a nombre del hotel', style: TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -707,9 +766,28 @@ class _RemoteCheckInState extends State<_RemoteCheckIn> {
               ],
             ),
           ),
+        ] else if (stay.status == StayStatus.checkInInProgress) ...[
+          const Text('Check-in en proceso', style: TextStyle(fontFamily: kSerif, fontSize: 22)),
+          const Text('Ya enviaste tu documento. Al llegar al hotel confirma tu identidad y recibe tu código de acceso.',
+              style: TextStyle(color: kMuted)),
+          const SizedBox(height: 12),
+          if (arrived) ...[
+            if (_waitMessage != null) ...[
+              InfoRow(Icons.hourglass_bottom, _waitMessage!, color: kWarning),
+              const SizedBox(height: 8),
+            ],
+            AppButton(text: 'Ya llegué', icon: Icons.key_outlined, dark: true, loading: _sending, onPressed: _confirmArrival),
+          ] else
+            InfoRow(Icons.event_available, 'Te esperamos el ${fmtDate(stay.checkIn)} desde las ${fmtHour12(stay.checkIn)}.', color: kSuccess),
+          const SizedBox(height: 8),
         ] else ...[
           const Text('Check-in digital', style: TextStyle(fontFamily: kSerif, fontSize: 22)),
-          const Text('Tu reserva está pagada. Regístrate y recibe tu código de acceso.', style: TextStyle(color: kMuted)),
+          Text(
+            arrived
+                ? 'Tu reserva está pagada. Regístrate y recibe tu código de acceso.'
+                : 'Tu reserva está pagada. Regístrate antes de llegar; en el hotel solo confirmarás tu identidad.',
+            style: const TextStyle(color: kMuted),
+          ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -740,6 +818,7 @@ class _RemoteCheckInState extends State<_RemoteCheckIn> {
             ],
           ),
           if (_photo != null) InfoRow(Icons.check_circle_outline, 'Documento: ${_photo!.name}', color: kSuccess),
+          if (_waitMessage != null) InfoRow(Icons.hourglass_bottom, _waitMessage!, color: kWarning),
           const SizedBox(height: 14),
           AppButton(text: 'Completar check-in', icon: Icons.key_outlined, dark: true, loading: _sending, onPressed: _send),
         ],

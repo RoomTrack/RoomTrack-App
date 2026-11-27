@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/hotel_store.dart';
@@ -14,7 +16,7 @@ Future<bool> showPaymentSheet(
   BuildContext context, {
   required String title,
   required double amount,
-  required void Function(PaymentParts parts) onPay,
+  required FutureOr<void> Function(PaymentParts parts) onPay,
   bool allowSplit = false,
   bool allowCash = false,
 }) async {
@@ -46,7 +48,7 @@ class _PartControllers {
 class _PaymentForm extends StatefulWidget {
   final String title;
   final double amount;
-  final void Function(PaymentParts parts) onPay;
+  final FutureOr<void> Function(PaymentParts parts) onPay;
   final bool allowSplit;
   final bool allowCash;
 
@@ -59,6 +61,7 @@ class _PaymentForm extends StatefulWidget {
 class _PaymentFormState extends State<_PaymentForm> {
   final List<_PartControllers> _parts = [_PartControllers()];
   String? _error;
+  bool _paying = false;
 
   @override
   void initState() {
@@ -87,16 +90,22 @@ class _PaymentFormState extends State<_PaymentForm> {
     });
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final parts = <({double amount, CardInfo? card})>[
       for (final part in _parts)
         (amount: double.tryParse(part.amount.text.replaceAll(',', '.')) ?? 0, card: part.cash ? null : part.card),
     ];
+    setState(() {
+      _paying = true;
+      _error = null;
+    });
     try {
-      widget.onPay(parts);
-      Navigator.pop(context, true);
+      await widget.onPay(parts);
+      if (mounted) Navigator.pop(context, true);
     } on DomainException catch (e) {
-      setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _paying = false);
     }
   }
 
@@ -178,7 +187,7 @@ class _PaymentFormState extends State<_PaymentForm> {
                 decoration: BoxDecoration(color: kError.withAlpha(20), borderRadius: BorderRadius.circular(14)),
                 child: Text(_error!, style: const TextStyle(color: kError, fontWeight: FontWeight.w700)),
               ),
-            AppButton(text: 'Pagar', icon: Icons.lock, dark: true, onPressed: _submit),
+            AppButton(text: 'Pagar', icon: Icons.lock, dark: true, loading: _paying, onPressed: _submit),
           ],
         ),
       ),

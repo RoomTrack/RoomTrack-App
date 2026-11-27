@@ -23,7 +23,10 @@ class ApiException extends DomainException {
   /// Stable code of the backend ProblemDetails, e.g. `auth.email_not_verified`.
   final String code;
 
-  const ApiException(this.statusCode, super.message, {this.code = ''});
+  /// `params` of the ProblemDetails (e.g. the estimated wait of `check_in.room_not_ready`).
+  final Map<String, dynamic> params;
+
+  const ApiException(this.statusCode, super.message, {this.code = '', this.params = const {}});
 }
 
 /// Access and refresh tokens of the signed-in user.
@@ -185,8 +188,9 @@ class ApiClient {
       if (decoded is Map<String, dynamic>) parsed = decoded;
     } catch (_) {}
     final code = parsed?['code']?.toString() ?? '';
-    final known = _spanish[code];
-    if (known != null) return ApiException(statusCode, known, code: code);
+    final params = (parsed?['params'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+    final known = _withParams(code, params) ?? _spanish[code];
+    if (known != null) return ApiException(statusCode, known, code: code, params: params);
 
     // Each broken rule carries its own code (e.g. `payment_settings.cci_invalid`).
     final violations = parsed?['violations'];
@@ -217,6 +221,21 @@ class ApiClient {
       502 || 503 || 504 => 'El servidor está arrancando. Inténtalo de nuevo en un momento.',
       _ => 'Error del servidor ($statusCode).',
     }, code: code);
+  }
+
+  /// Messages that carry the `params` of the error.
+  static String? _withParams(String code, Map<String, dynamic> params) {
+    switch (code) {
+      case 'check_in.room_not_ready':
+        final minutes = (params['estimatedWaitMinutes'] as num?)?.toInt();
+        return minutes == null
+            ? 'Tu habitación aún no está lista. Pide ayuda a recepción.'
+            : 'Tu habitación aún no está lista: estará en unos $minutes ${minutes == 1 ? 'minuto' : 'minutos'}.';
+      case 'payment.card_declined':
+        final reason = params['reason']?.toString().trim() ?? '';
+        return 'La tarjeta fue rechazada${reason.isEmpty ? '.' : ': $reason'} Prueba con otra tarjeta o paga en el hotel.';
+    }
+    return null;
   }
 
   static const Map<String, String> _spanish = {
@@ -365,9 +384,16 @@ class ApiClient {
     'payment.booking_already_paid': 'Esta reserva ya está pagada.',
     'payment.booking_not_pending': 'Solo se registran pagos de reservas pendientes.',
     'payment.operation_number_required': 'Ingresa el número de operación.',
+    'payment.online_card_not_registrable': 'El pago con tarjeta en línea lo hace el huésped desde su app.',
+    'payment.card_declined': 'La tarjeta fue rechazada. Prueba con otra tarjeta o paga en el hotel.',
+    'payment.card_token_invalid': 'No pudimos leer la tarjeta. Vuelve a ingresarla.',
     'check_in.booking_not_confirmed': 'Tu reserva debe estar pagada para hacer el check-in.',
     'check_in.not_open_yet': 'El check-in digital aún no está abierto para tu reserva.',
     'check_in.already_completed': 'Ya completaste el check-in.',
+    'check_in.awaiting_arrival': 'Ya hiciste tu check-in digital: al llegar al hotel confirma tu identidad para recibir tu código.',
+    'check_in.not_awaiting_arrival': 'Esta reserva no tiene un check-in esperando la llegada: completa el check-in digital.',
+    'check_in.identity_mismatch': 'El número no coincide con el del documento que enviaste en el check-in.',
+    'check_in.room_not_ready': 'Tu habitación aún no está lista. Pide ayuda a recepción.',
     'check_in.stay_ended': 'Tu estancia ya terminó.',
     'check_in.dni_invalid': 'El DNI debe tener 8 dígitos.',
     'check_in.dni_only_for_nationals': 'El DNI solo aplica a nacionalidad peruana (PE).',

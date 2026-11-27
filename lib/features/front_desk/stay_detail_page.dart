@@ -168,7 +168,13 @@ class _StayDetailPageState extends State<StayDetailPage> {
         const SizedBox(height: 10),
         AppButton(text: 'Check-in en recepción', icon: Icons.key_outlined, dark: true, onPressed: () => showAssistedCheckInSheet(context, stay)),
       ],
-      if (stay.status == StayStatus.reserved) ...[
+      // US-13: the guest sent the document before arriving; at the desk they only confirm their identity.
+      if (stay.status == StayStatus.checkInInProgress) ...[
+        const InfoRow(Icons.phone_iphone, 'Check-in en proceso: el huésped ya envió su documento desde la app.', color: kSuccess),
+        const SizedBox(height: 10),
+        AppButton(text: 'Confirmar llegada', icon: Icons.how_to_reg_outlined, dark: true, onPressed: () => _confirmArrival(context, stay)),
+      ],
+      if (stay.status == StayStatus.reserved || stay.status == StayStatus.checkInInProgress) ...[
         const SizedBox(height: 10),
         AppButton(text: 'Cambiar fechas o habitación', icon: Icons.edit_calendar_outlined, outlined: true, onPressed: () => showRescheduleSheet(context, stay)),
       ],
@@ -212,11 +218,19 @@ class _StayDetailPageState extends State<StayDetailPage> {
         const SizedBox(height: 10),
         AppButton(text: 'Datos para factura', icon: Icons.business_outlined, outlined: true, onPressed: () => editFiscalData(context, store, stay)),
       ],
-        if (stay.status == StayStatus.reserved) ...[
+        if (stay.status == StayStatus.reserved || stay.status == StayStatus.checkInInProgress) ...[
           const SizedBox(height: 10),
           AppButton(text: 'Cancelar reserva', icon: Icons.event_busy_outlined, outlined: true, onPressed: () => cancelRemoteBooking(context, stay)),
         ],
     ];
+  }
+
+  /// US-13: the front desk confirms the identity of a guest who checked in before arriving.
+  Future<void> _confirmArrival(BuildContext context, Stay stay) async {
+    final number = await askText(context, title: 'Llegada de ${stay.guestName}', label: 'Número del documento que envió');
+    if (number == null || !context.mounted) return;
+    await runAsync(context, () => HotelStore.instance.remote!.confirmArrival(stay.id, number),
+        success: 'Llegada confirmada: ${stay.guestName} ya tiene su código de acceso en la app.');
   }
 }
 

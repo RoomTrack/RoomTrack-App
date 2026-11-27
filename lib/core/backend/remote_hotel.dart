@@ -758,6 +758,8 @@ class RemoteHotel {
       status: switch (data['status']) {
         'CheckedIn' => StayStatus.checkedIn,
         'Completed' => StayStatus.checkedOut,
+        // US-13: the digital check-in done before arriving waits for the guest ("check-in en proceso").
+        _ when data['checkInStage'] == 'InProgress' => StayStatus.checkInInProgress,
         _ => StayStatus.reserved,
       },
       // The backend has no guarantee deposit: nothing to hold.
@@ -885,8 +887,9 @@ class RemoteHotel {
     store.refresh();
   }
 
-  static String _methodLabel(String value) =>
-      kPaymentMethods.where((m) => m.value == value).firstOrNull?.label ?? value;
+  static String _methodLabel(String value) => value == 'OnlineCard'
+      ? 'Tarjeta en la app'
+      : kPaymentMethods.where((m) => m.value == value).firstOrNull?.label ?? value;
 
   // ---------------------------------------------------------------------------
   // Actions the backend supports
@@ -990,7 +993,8 @@ class RemoteHotel {
     await sync();
   }
 
-  /// US-13: the guest's digital check-in with a photo of the identity document. Returns the access code.
+  /// US-13: the guest's digital check-in with a photo of the identity document. Returns the access code; null when it
+  /// was done before the arrival day (the booking stays "check-in en proceso" until the guest confirms the arrival).
   Future<String?> completeCheckIn(int bookingId, {required String documentType, required String documentNumber,
       required String nationality, required Uint8List document, required String fileName}) async {
     final data = await api.postMultipart('/bookings/$bookingId/check-in', {
@@ -1003,6 +1007,25 @@ class RemoteHotel {
     store.stays.where((s) => s.id == bookingId).firstOrNull?.accessCode = code;
     store.refresh();
     return code;
+  }
+
+  /// US-13: the guest who checked in before arriving (or the front desk for them) confirms their identity at the hotel
+  /// with the number of the document sent. Returns the access code (only for the guest).
+  Future<String?> confirmArrival(int bookingId, String documentNumber) async {
+    if (documentNumber.trim().isEmpty) throw const DomainException('Ingresa el número del documento que enviaste en el check-in.');
+    final data = await api.post('/bookings/$bookingId/check-in/arrival', {'documentNumber': documentNumber.trim()}) as Map<String, dynamic>;
+    final code = data['accessCode']?.toString();
+    await sync();
+    store.stays.where((s) => s.id == bookingId).firstOrNull?.accessCode = code;
+    store.refresh();
+    return code;
+  }
+
+  /// US-15: the guest pays their pending booking by card from the app. Only the gateway's token of the card is sent;
+  /// a declined card answers `payment.card_declined` and the booking stays pending.
+  Future<void> payBookingByCard(int bookingId, String cardToken) async {
+    await api.post('/bookings/$bookingId/payments/card', {'cardToken': cardToken});
+    await sync();
   }
 
   /// US-13, escenario 4: help from reception during the check-in.

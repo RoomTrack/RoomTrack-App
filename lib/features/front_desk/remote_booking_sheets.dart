@@ -69,7 +69,7 @@ class _AssistedCheckInState extends State<_AssistedCheckIn> {
       showAppSnack(context, 'Check-in completado${code == null ? '' : ' · código de acceso $code'}.');
     } on ApiException catch (e) {
       if (!mounted) return;
-      if (e.code == 'room.not_ready' || e.code == 'room.occupied') {
+      if (e.code == 'check_in.room_not_ready' || e.code == 'room.not_ready' || e.code == 'room.occupied') {
         final alternatives = await _remote.checkInAlternatives(widget.stay.id).catchError((_) => <AvailableRoom>[]);
         if (!mounted) return;
         setState(() {

@@ -118,8 +118,9 @@ class ApiClient {
 
   Future<http.Response> _guard(Future<http.Response> Function() send) async {
     try {
-      // The gateway and some services scale to zero: the first request after a while takes ~10–20 s.
-      return await send().timeout(const Duration(seconds: 60));
+      // The gateway and some services scale to zero, and the gateway waits up to 90 s for a sleeping service to boot
+      // before forwarding to it: the first requests after a while take from ~20 s to over a minute.
+      return await send().timeout(const Duration(seconds: 100));
     } catch (_) {
       throw const ApiException(0, 'No hay conexión con el servidor de RoomTrack. Revisa que el backend esté encendido.');
     }

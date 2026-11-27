@@ -196,6 +196,15 @@ Existen en el backend local, después de `tool/seed_backend.py`, y en producció
 | Huésped (reserva pagada) | `huesped@roomtrack.pe` | `RoomTrack-Huesped-2026!` |
 | Huésped (pago pendiente) | `huesped2@roomtrack.pe` | `RoomTrack-Huesped-2026!` |
 
+**Pago con tarjeta (US-15).** El huésped con pago pendiente puede pagar desde *Mi estadía*. La pasarela del backend
+está en modo de prueba y la app solo le envía el token de la tarjeta: `4242 4242 4242 4242` (Visa) y
+`5555 5555 5555 4444` (Mastercard) se aprueban; `4000 0000 0000 9995` (sin fondos), `4000 0000 0000 0069` (vencida)
+y `4000 0000 0000 0002` se rechazan.
+
+**Check-in antes de llegar (US-13).** Hasta 3 días antes de la llegada, el check-in digital deja la reserva en
+"check-in en proceso". El día de llegada el huésped (o recepción) solo confirma el número del documento y recibe el
+código de acceso. Si la habitación aún no está lista, la app muestra la espera estimada.
+
 **Verificación en dos pasos.** El backend exige MFA (TOTP) a todo el personal:
 
 - La primera vez que alguien del personal entra, la app muestra un **código QR** para Google Authenticator o
@@ -293,7 +302,8 @@ flutter test test/backend/remote_hotel_live_test.dart --dart-define=API_BASE_URL
 | Productividad del personal, tiempos de atención y exportación CSV desde el servidor (US-24, US-25, US-34) | |
 | Envío programado de reportes por correo, semanal o mensual, y envío inmediato (US-34) | |
 | Reservas, disponibilidad por fechas, cambio de fechas o habitación, pagos y cancelación | |
-| Check-in digital del huésped y check-in en recepción con alternativas si la habitación no está lista | |
+| Check-in digital (también antes de llegar, con confirmación de la llegada) y check-in en recepción con alternativas si la habitación no está lista | |
+| Pago de la reserva con tarjeta desde la app (pasarela en modo de prueba) | |
 | Ficha del huésped: contacto, documento, corrección y desactivación | |
 | Tareas de limpieza y protocolos (checklists) por tipo de habitación (US-05 a US-07) | |
 | Incidencias, recurrencias, mantenimiento preventivo, resumen por habitación y alertas (US-08 a US-10, US-23, US-30) | |

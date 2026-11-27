@@ -872,7 +872,8 @@ class HotelStore extends ChangeNotifier {
   List<Stay> get inHouse => stays.where((s) => s.status == StayStatus.checkedIn).toList();
 
   List<Stay> get upcoming => stays
-      .where((s) => s.status == StayStatus.reserved && DateUtils.dateOnly(s.checkIn).isAfter(DateUtils.dateOnly(now)))
+      .where((s) => s.status == StayStatus.reserved || s.status == StayStatus.checkInInProgress)
+      .where((s) => DateUtils.dateOnly(s.checkIn).isAfter(DateUtils.dateOnly(now)))
       .toList();
 
   Stay createReservation({

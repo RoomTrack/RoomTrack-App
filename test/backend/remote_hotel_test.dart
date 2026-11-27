@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:roomtrack/core/backend/api_client.dart';
 import 'package:roomtrack/core/backend/remote_hotel.dart';
+import 'package:roomtrack/core/backend/sandbox_card_gateway.dart';
 import 'package:roomtrack/core/hotel_store.dart';
 import 'package:roomtrack/domain/models.dart';
 
@@ -114,6 +115,76 @@ void main() {
     expect(error.message, 'Ese código ya se usó. Espera el siguiente de tu app autenticadora.');
     final validation = ApiClient.problem(400, jsonEncode({'errors': {'email': ['El correo no es válido.']}}));
     expect(validation.message, 'El correo no es válido.');
+  });
+
+  test('US-13: el check-in hecho antes de llegar queda en proceso y la llegada entrega el código', () async {
+    final calls = <String>[];
+    var arrived = false;
+    Map<String, Object?> booking() => {
+          'id': 20, 'code': 'RT-7K2M9Q', 'hotelId': 1, 'roomId': 10, 'guestName': 'Sofía Herrera', 'guestEmail': 'huesped@roomtrack.pe',
+          'checkInDate': '2026-10-05T00:00:00', 'checkOutDate': '2026-10-07T00:00:00', 'nights': 2, 'totalPrice': 410,
+          'status': arrived ? 'CheckedIn' : 'Confirmed', 'checkInStage': arrived ? 'Completed' : 'InProgress',
+          'createdAt': '2026-10-01T10:00:00Z', 'userId': 6, if (arrived) 'checkedInAt': '2026-10-05T15:10:00Z',
+        };
+    final remote = fakeBackend(
+      me: {'id': 6, 'email': 'huesped@roomtrack.pe', 'firstName': 'Sofía', 'lastName': 'Herrera', 'role': 'guest', 'hotelId': null},
+      signIn: {'id': 6, 'token': 'access'},
+      extra: {
+        'GET /bookings': () => [booking()],
+        'POST /bookings/20/check-in/arrival': () {
+          arrived = true;
+          return {'bookingId': 20, 'bookingStatus': 'CheckedIn', 'status': 'Approved', 'accessCode': '482915'};
+        },
+      },
+      calls: calls,
+    );
+    await remote.signIn('huesped@roomtrack.pe', 'x');
+    expect(remote.store.stayById(20).status, StayStatus.checkInInProgress);
+
+    expect(await remote.confirmArrival(20, ' 45678912 '), '482915');
+    expect(calls, contains('POST /bookings/20/check-in/arrival {"documentNumber":"45678912"}'));
+    expect(remote.store.stayById(20).status, StayStatus.checkedIn);
+    expect(remote.store.stayById(20).accessCode, '482915');
+  });
+
+  test('US-15: el huésped paga su reserva con tarjeta enviando solo el token', () async {
+    final calls = <String>[];
+    final remote = fakeBackend(
+      me: {'id': 8, 'email': 'huesped2@roomtrack.pe', 'firstName': 'Andrés', 'lastName': 'Molina', 'role': 'guest', 'hotelId': null},
+      signIn: {'id': 8, 'token': 'access'},
+      extra: {
+        'POST /bookings/8/payments/card': {'id': 16, 'bookingId': 8, 'amount': 140, 'status': 'Completed', 'method': 'OnlineCard'},
+        'GET /payments/booking/8': {'id': 16, 'bookingId': 8, 'amount': 140, 'status': 'Completed', 'method': 'OnlineCard', 'paymentDate': '2026-10-02 11:00:00'},
+      },
+      calls: calls,
+    );
+    await remote.signIn('huesped2@roomtrack.pe', 'x');
+    const card = CardInfo(number: '4242 4242 4242 4242', holder: 'Andrés Molina', expiry: '12/29', cvv: '123');
+    await remote.payBookingByCard(8, SandboxCardGateway.tokenize(card));
+    expect(calls, contains('POST /bookings/8/payments/card {"cardToken":"tok_visa"}'));
+  });
+
+  test('la pasarela de prueba solo acepta tarjetas de prueba con los datos completos', () {
+    CardInfo card(String number, {String expiry = '12/29'}) => CardInfo(number: number, holder: 'Ana Torres', expiry: expiry, cvv: '123');
+    expect(SandboxCardGateway.tokenize(card('4000 0000 0000 9995')), 'tok_declined_insufficient_funds');
+    expect(() => SandboxCardGateway.tokenize(card('4242 4242 4242 4242', expiry: '13/29')), throwsA(isA<DomainException>()));
+    expect(() => SandboxCardGateway.tokenize(card('4111 1111 1111 1111')), throwsA(isA<DomainException>()));
+  });
+
+  test('los errores con params muestran la espera y el motivo del rechazo', () {
+    final notReady = ApiClient.problem(409, jsonEncode({
+      'code': 'check_in.room_not_ready',
+      'params': {'roomId': 101, 'roomStatus': 'Cleaning', 'estimatedWaitMinutes': 25},
+    }));
+    expect(notReady.message, 'Tu habitación aún no está lista: estará en unos 25 minutos.');
+    expect(notReady.params['roomStatus'], 'Cleaning');
+    final unknownWait = ApiClient.problem(409, jsonEncode({'code': 'check_in.room_not_ready', 'params': {'estimatedWaitMinutes': null}}));
+    expect(unknownWait.message, 'Tu habitación aún no está lista. Pide ayuda a recepción.');
+    final declined = ApiClient.problem(409, jsonEncode({
+      'code': 'payment.card_declined',
+      'params': {'reason': 'La tarjeta no tiene fondos suficientes.'},
+    }));
+    expect(declined.message, 'La tarjeta fue rechazada: La tarjeta no tiene fondos suficientes. Prueba con otra tarjeta o paga en el hotel.');
   });
 
   test('el administrador configura los medios de pago del hotel', () async {

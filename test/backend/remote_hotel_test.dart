@@ -11,7 +11,7 @@ import 'package:roomtrack/domain/models.dart';
 /// A fake gateway answering the routes the app uses, with the shapes of the real backend. A route can map to a
 /// function to answer with what earlier calls changed.
 RemoteHotel fakeBackend({required Map<String, Object?> me, Map<String, Object?> signIn = const {},
-    Map<String, Object?> extra = const {}, List<String>? calls}) {
+    Map<String, Object?> extra = const {}, List<String>? calls, List<Uri>? urls}) {
   final routes = <String, Object?>{
     'POST /authentication/sign-in': signIn,
     'GET /users/me': me,
@@ -49,6 +49,7 @@ RemoteHotel fakeBackend({required Map<String, Object?> me, Map<String, Object?> 
   final client = MockClient((request) async {
     final path = request.url.path.replaceFirst(RegExp(r'^.*?(?=/[a-z])'), '');
     final key = '${request.method} $path';
+    urls?.add(request.url);
     calls?.add(request.body.isEmpty ? key : '$key ${request.body}');
     if (!routes.containsKey(key)) return http.Response(jsonEncode({'title': 'Not found', 'status': 404}), 404);
     // A function answers with the current state of the fake backend.
@@ -609,5 +610,73 @@ void main() {
     await remote.acknowledgeHandover(30);
     expect(store.handovers.single.readBy.keys, [3]);
   });
-}
 
+  test('un administrador sin hotel registra el suyo y sigue con la sesión renovada', () async {
+    int? hotelId;
+    final calls = <String>[];
+    final remote = fakeBackend(
+      me: const {},
+      signIn: {'id': 1, 'token': 'access', 'refreshToken': 'refresh'},
+      calls: calls,
+      extra: {
+        'GET /users/me': () => {'id': 1, 'email': 'admin@roomtrack.pe', 'firstName': 'Ana', 'lastName': 'Torres', 'role': 'admin', 'hotelId': hotelId},
+        'POST /hotels': () {
+          hotelId = 1;
+          return {
+            'hotel': {'id': 1, 'name': 'Casa Aurora', 'location': 'Av. Larco 1150, Lima, Perú', 'acceptsBookings': false},
+            'session': {'token': 'access-with-hotel', 'tokenType': 'Bearer', 'refreshToken': 'refresh-2'},
+          };
+        },
+      },
+    );
+    await remote.signIn('admin@roomtrack.pe', 'x');
+    expect(remote.needsHotel, isTrue);
+    expect(calls, isNot(contains('GET /rooms')), reason: 'sin hotel no hay nada que sincronizar');
+
+    await remote.createHotel({'name': 'Casa Aurora'});
+    expect(remote.api.session?.accessToken, 'access-with-hotel');
+    expect(remote.api.session?.refreshToken, 'refresh-2');
+    expect(remote.hotelId, 1);
+    expect(remote.needsHotel, isFalse);
+    expect(remote.store.rooms.map((r) => r.number), ['201', '304']);
+  });
+
+  test('el administrador de cadena elige un hotel y todo lo que lee queda en ese hotel', () async {
+    final urls = <Uri>[];
+    final remote = fakeBackend(
+      me: {'id': 2, 'email': 'cadena@roomtrack.pe', 'firstName': 'Carla', 'lastName': 'Ríos', 'role': 'chain_admin', 'hotelId': null},
+      signIn: {'id': 2, 'token': 'access', 'refreshToken': 'refresh'},
+      urls: urls,
+      extra: {
+        'GET /hotels': [
+          {'id': 2, 'name': 'Wasi Cusco', 'location': 'Calle Plateros 3, Cusco, Perú', 'imageUrl': '', 'acceptsBookings': true},
+          {'id': 1, 'name': 'Casa Aurora', 'location': 'Av. Larco 1150, Lima, Perú', 'imageUrl': '', 'acceptsBookings': false},
+        ],
+      },
+    );
+    final chosen = <int?>[];
+    remote.onHotelChosen = chosen.add;
+    await remote.signIn('cadena@roomtrack.pe', 'x');
+    expect(remote.isChainAdmin, isTrue);
+    expect(remote.needsHotel, isTrue);
+
+    final hotels = await remote.chainHotels();
+    expect(hotels.map((h) => h.name), ['Casa Aurora', 'Wasi Cusco']);
+
+    urls.clear();
+    await remote.chooseHotel(hotels.last);
+    expect(chosen, [2]);
+    expect(remote.hotelId, 2);
+    expect(remote.needsHotel, isFalse);
+    expect(remote.store.rooms.map((r) => r.number), ['101']);
+    final reads = urls.where((u) => !u.path.contains('/hotels')).toList();
+    expect(reads, isNotEmpty);
+    expect(reads.every((u) => u.queryParameters['hotelId'] == '2'), isTrue, reason: '${reads.where((u) => u.queryParameters['hotelId'] != '2')}');
+
+    remote.leaveHotel();
+    expect(chosen, [2, null]);
+    expect(remote.needsHotel, isTrue);
+    expect(remote.store.rooms, isEmpty);
+    expect(remote.api.scopeHotelId, isNull);
+  });
+}

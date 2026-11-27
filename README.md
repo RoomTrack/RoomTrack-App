@@ -33,6 +33,10 @@ rol, y lo demás que el rol puede hacer está en **Más**. Si alguien intenta ab
 "Acceso denegado" (US-01).
 
 ### Administrador
+- **Hoteles** (con backend): cada administrador (`admin`) administra un solo hotel. Si su cuenta aún no tiene uno,
+  la app le pide registrarlo, y al hacerlo el backend le renueva la sesión con el hotel. El administrador de cadena
+  (`chain_admin`) elige en qué hotel de la cadena trabaja, puede registrar todos los hoteles que quiera y cambia de
+  hotel desde la barra superior; la app recuerda el último que eligió.
 - **Panel** con ocupación, habitaciones por limpiar, incidencias abiertas y tareas atrasadas; lo crítico aparece
   primero y cada indicador lleva a su detalle (US-18).
 - **Tablero de habitaciones** agrupado por estado y filtrable por piso, con historial de incidencias por

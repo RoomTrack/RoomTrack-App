@@ -138,7 +138,7 @@ class _HotelSetupPageState extends State<HotelSetupPage> {
     final saved = await showModalBottomSheet<HotelInfo>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _HotelForm(hotel: hotel),
+      builder: (_) => HotelForm(hotel: hotel),
     );
     if (saved != null && mounted) setState(() => _hotel = Future.value(saved));
   }
@@ -232,25 +232,27 @@ class _HotelCard extends StatelessWidget {
   }
 }
 
-class _HotelForm extends StatefulWidget {
-  final HotelInfo hotel;
+/// The hotel's details: edits [hotel], or registers a new hotel when it is null (pops `true` once registered).
+class HotelForm extends StatefulWidget {
+  final HotelInfo? hotel;
 
-  const _HotelForm({required this.hotel});
+  const HotelForm({super.key, this.hotel});
 
   @override
-  State<_HotelForm> createState() => _HotelFormState();
+  State<HotelForm> createState() => _HotelFormState();
 }
 
-class _HotelFormState extends State<_HotelForm> {
+class _HotelFormState extends State<HotelForm> {
   final _remote = HotelStore.instance.remote!;
-  late final _name = TextEditingController(text: widget.hotel.name);
-  late final _address = TextEditingController(text: widget.hotel.address);
-  late final _city = TextEditingController(text: widget.hotel.city);
-  late final _country = TextEditingController(text: widget.hotel.country);
-  late final _image = TextEditingController(text: widget.hotel.imageUrl);
-  late final _description = TextEditingController(text: widget.hotel.description);
-  late String _type = widget.hotel.type;
-  late final Set<String> _amenities = {...widget.hotel.amenities};
+  late final _name = TextEditingController(text: widget.hotel?.name);
+  late final _address = TextEditingController(text: widget.hotel?.address);
+  late final _city = TextEditingController(text: widget.hotel?.city);
+  late final _country = TextEditingController(text: widget.hotel?.country ?? 'Perú');
+  late final _image = TextEditingController(text: widget.hotel?.imageUrl);
+  late final _description = TextEditingController(text: widget.hotel?.description);
+  late String _type = widget.hotel?.type ?? '';
+  late final Set<String> _amenities = {...?widget.hotel?.amenities};
+  bool get _creating => widget.hotel == null;
   late final Future<(List<String>, List<String>)> _options =
       Future.wait([_remote.hotelCategories(), _remote.amenityOptions()]).then((r) => (r[0], r[1]));
   bool _uploading = false;
@@ -276,11 +278,37 @@ class _HotelFormState extends State<_HotelForm> {
   }
 
   Future<void> _save() async {
+    final missing = [
+      if (_name.text.trim().length < 2) 'el nombre',
+      if (_address.text.trim().length < 3) 'la dirección',
+      if (_city.text.trim().length < 2) 'la ciudad',
+      if (_country.text.trim().length < 2) 'el país',
+      if (_type.isEmpty) 'la categoría',
+      if (!(Uri.tryParse(_image.text.trim())?.isAbsolute ?? false)) 'una foto (súbela o pega su URL)',
+    ];
+    if (missing.isNotEmpty) {
+      showAppSnack(context, 'Falta ${missing.join(', ')}.', error: true);
+      return;
+    }
     setState(() => _saving = true);
+    if (_creating) {
+      final ok = await runAsync(context, () => _remote.createHotel(_draft(0).toJson()), success: 'Hotel registrado.');
+      if (!mounted) return;
+      setState(() => _saving = false);
+      if (ok) Navigator.pop(context, true);
+      return;
+    }
     HotelInfo? saved;
     final ok = await runAsync(context, () async {
-      saved = await _remote.updateHotel(HotelInfo(
-        id: widget.hotel.id,
+      saved = await _remote.updateHotel(_draft(widget.hotel!.id));
+    }, success: 'Datos del hotel actualizados.');
+    if (!mounted) return;
+    setState(() => _saving = false);
+    if (ok) Navigator.pop(context, saved);
+  }
+
+  HotelInfo _draft(int id) => HotelInfo(
+        id: id,
         name: _name.text,
         address: _address.text,
         city: _city.text,
@@ -289,12 +317,7 @@ class _HotelFormState extends State<_HotelForm> {
         description: _description.text,
         type: _type,
         amenities: _amenities.toList(),
-      ));
-    }, success: 'Datos del hotel actualizados.');
-    if (!mounted) return;
-    setState(() => _saving = false);
-    if (ok) Navigator.pop(context, saved);
-  }
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -305,7 +328,7 @@ class _HotelFormState extends State<_HotelForm> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Datos del hotel', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            Text(_creating ? 'Registrar un hotel' : 'Datos del hotel', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
             const SizedBox(height: 12),
             TextField(controller: _name, decoration: const InputDecoration(labelText: 'Nombre')),
             const SizedBox(height: 8),
@@ -367,7 +390,12 @@ class _HotelFormState extends State<_HotelForm> {
               },
             ),
             const SizedBox(height: 16),
-            AppButton(text: 'Guardar', icon: Icons.save, loading: _saving, onPressed: _save),
+            AppButton(
+              text: _creating ? 'Registrar hotel' : 'Guardar',
+              icon: _creating ? Icons.add_business_outlined : Icons.save,
+              loading: _saving,
+              onPressed: _save,
+            ),
           ],
         ),
       ),

@@ -41,7 +41,7 @@ class _LoginPageState extends State<LoginPage> {
     try {
       final remote = HotelStore.instance.remote;
       if (remote != null) {
-        SessionStore.watch(remote.api);
+        SessionStore.watch(remote);
         final outcome = await remote.signIn(_email.text, _password.text);
         if (!mounted) return;
         if (outcome is SignedIn) {

@@ -44,12 +44,25 @@ class ApiClient {
   /// Called whenever the session changes (sign-in, refresh, revocation) so it can be persisted.
   void Function(ApiSession? session)? onSessionChanged;
 
+  /// The hotel a chain administrator is working on: every read without its own `hotelId` is scoped to it, since
+  /// the backend answers a chain administrator with the whole chain otherwise. Null for everybody else.
+  int? scopeHotelId;
+
   static String get baseUrl {
     final trimmed = _rawBaseUrl.trim();
     return trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
   }
 
   Uri _uri(String path) => Uri.parse('$baseUrl$path');
+
+  /// [path] with the chain administrator's hotel, unless it already names one.
+  String _scoped(String path) {
+    final hotel = scopeHotelId;
+    if (hotel == null || path.contains('hotelId=') || path.startsWith('/authentication') || path.startsWith('/hotels')) {
+      return path;
+    }
+    return '$path${path.contains('?') ? '&' : '?'}hotelId=$hotel';
+  }
 
   Map<String, String> _headers({bool json = true, String? bearer}) => {
         'Accept': 'application/json',
@@ -62,12 +75,12 @@ class ApiClient {
     onSessionChanged?.call(value);
   }
 
-  Future<dynamic> get(String path) => _send('GET', path);
+  Future<dynamic> get(String path) => _send('GET', _scoped(path));
 
   /// A text download (a CSV report): the body as it comes, or the backend's problem as an [ApiException].
   Future<String> getText(String path) async {
     Future<http.Response> send() => _client
-        .send(http.Request('GET', _uri(path))..headers.addAll({..._headers(json: false), 'Accept': 'text/csv, */*'}))
+        .send(http.Request('GET', _uri(_scoped(path)))..headers.addAll({..._headers(json: false), 'Accept': 'text/csv, */*'}))
         .then(http.Response.fromStream);
 
     var response = await _guard(send);

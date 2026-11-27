@@ -10,6 +10,13 @@ tool/demo_accounts.local.json (git-ignored) so you can add them to Google Authen
 enroll from the app on their first sign-in.
 
 E-mail verification links are read from the notifications worker log (Email__Transport=Log in local development).
+
+Against a deployed backend, where the e-mails really go out:
+
+- SEED_EMAIL_VERIFIER: command that marks an e-mail as verified, run with the e-mail as its last argument
+  (e.g. a script that updates the identity database), instead of reading the worker log.
+- SEED_SKIP_CHAIN_ADMIN=1: start from an admin@roomtrack.pe already created by a chain administrator, instead of
+  signing in as cadena@roomtrack.pe (a chain administrator cannot create another one).
 """
 
 import base64
@@ -19,6 +26,7 @@ import hmac
 import json
 import os
 import re
+import shlex
 import struct
 import subprocess
 import sys
@@ -29,6 +37,8 @@ import urllib.request
 API = os.environ.get("API_BASE_URL", "http://localhost:8080/api/v1").rstrip("/")
 BACKEND_DIR = os.environ.get("ROOMTRACK_BACKEND_DIR", os.path.expanduser("~/RiderProjects/RoomTrack-BackEnd"))
 STATE_FILE = os.path.join(os.path.dirname(__file__), "demo_accounts.local.json")
+EMAIL_VERIFIER = os.environ.get("SEED_EMAIL_VERIFIER", "").strip()
+SKIP_CHAIN_ADMIN = os.environ.get("SEED_SKIP_CHAIN_ADMIN") == "1"
 
 CHAIN_ADMIN = {"email": "cadena@roomtrack.pe", "password": "Cadena-RoomTrack-2026!"}
 STAFF_PASSWORD = "RoomTrack-Staff-2026!"
@@ -166,6 +176,9 @@ def verification_token(email, since):
 
 
 def verify(email, since):
+    if EMAIL_VERIFIER:
+        subprocess.run([*shlex.split(EMAIL_VERIFIER, posix=False), email], check=True)
+        return
     call("POST", "/authentication/verify-email", {"token": verification_token(email, since)})
 
 
@@ -210,12 +223,15 @@ def main():
     state = load_state()
     since = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    print("Administrador de cadena")
-    chain_token = sign_in(CHAIN_ADMIN["email"], CHAIN_ADMIN["password"], state)
-
-    print("Administrador del hotel")
     admin = STAFF[0]
-    ensure_user(chain_token, admin, STAFF_PASSWORD, None, since)
+    if SKIP_CHAIN_ADMIN:
+        print("Administrador del hotel (ya creado)")
+        verify(admin["email"], since)
+    else:
+        print("Administrador de cadena")
+        chain_token = sign_in(CHAIN_ADMIN["email"], CHAIN_ADMIN["password"], state)
+        print("Administrador del hotel")
+        ensure_user(chain_token, admin, STAFF_PASSWORD, None, since)
     admin_token = sign_in(admin["email"], STAFF_PASSWORD, state)
 
     me = call("GET", "/users/me", token=admin_token)
@@ -236,6 +252,9 @@ def main():
         admin_token = hotel["session"]["token"]
         print(f"  + hotel {hotel_id}: Casa Aurora Boutique Hotel")
     else:
+        if not any(h["id"] == hotel_id for h in call("GET", "/hotels", token=admin_token)):
+            sys.exit(f"{admin['email']} tiene asignado el hotel {hotel_id}, que no existe. Créalo como administrador de "
+                     f"cadena (POST /hotels) o crea de nuevo la cuenta sin hotelId.")
         print(f"  = hotel {hotel_id}")
 
     call("PUT", f"/hotels/{hotel_id}/payment-settings", {
@@ -301,7 +320,9 @@ def main():
                  token=admin_token)
         print(f"  + {booking['code']} · hab. {number} · {email}{' · pagada' if paid else ' · pago pendiente'}")
 
-    state["passwords"] = {"staff": STAFF_PASSWORD, "guest": GUEST_PASSWORD, "chainAdmin": CHAIN_ADMIN["password"]}
+    state["passwords"] = {"staff": STAFF_PASSWORD, "guest": GUEST_PASSWORD}
+    if not SKIP_CHAIN_ADMIN:
+        state["passwords"]["chainAdmin"] = CHAIN_ADMIN["password"]
     save_state(state)
     print(f"\nListo. Cuentas y secretos MFA en {STATE_FILE}")
 
